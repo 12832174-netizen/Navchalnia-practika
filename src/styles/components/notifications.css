@@ -1,0 +1,48 @@
+.notifications-page {
+  background-color: var(--app-surface);
+  border-color: var(--app-border);
+  overflow: hidden;
+}
+
+.notifications-header {
+  background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+  color: var(--app-text);
+}
+
+:root[data-theme='dark'] .notifications-header {
+  background: linear-gradient(135deg, #0b1d3f 0%, #142b55 100%);
+}
+
+.notifications-item {
+  position: relative;
+  background-color: transparent;
+  color: var(--app-text);
+}
+
+.notifications-item.is-unread {
+  background-color: var(--app-unread-surface);
+}
+
+.notifications-item.is-unread::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background-color: var(--app-accent);
+}
+
+.notifications-mark-all {
+  border: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.notifications-badge {
+  border: 1px solid var(--app-unread-border);
+}
+
+.notifications-item-action {
+  color: var(--app-accent);
+}
+
+.notifications-item-action:hover {
+  color: var(--app-accent-strong);
+}

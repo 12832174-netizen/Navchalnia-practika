@@ -1,0 +1,214 @@
+.app-loading {
+  @apply flex items-center justify-center h-64;
+}
+
+.app-spinner {
+  @apply animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600;
+}
+
+.app-page {
+  @apply space-y-6;
+}
+
+.app-page-lg {
+  @apply space-y-8;
+}
+
+.app-page-title {
+  @apply text-2xl font-bold;
+  color: var(--app-text);
+}
+
+.app-card {
+  @apply rounded-lg shadow-sm;
+  background-color: var(--app-surface);
+  border: 1px solid var(--app-border);
+  color: var(--app-text);
+}
+
+.app-card-header {
+  @apply px-6 py-4 border-b;
+  border-color: var(--app-border);
+}
+
+.app-card-body {
+  @apply p-6;
+}
+
+.app-card-body-tight {
+  @apply p-4;
+}
+
+.app-list-divider {
+  @apply divide-y;
+}
+
+.app-list-divider > :not([hidden]) ~ :not([hidden]) {
+  border-color: var(--app-border);
+}
+
+.app-list-item {
+  @apply p-6;
+}
+
+.app-list-item-hover {
+  @apply p-6 transition-colors;
+}
+
+.app-list-item-hover:hover {
+  background-color: var(--app-surface-muted);
+}
+
+.app-empty-state {
+  @apply p-8 text-center;
+}
+
+.app-empty-icon {
+  @apply mx-auto h-12 w-12;
+  color: var(--app-text-subtle);
+}
+
+.app-empty-title {
+  @apply mt-4 text-lg font-medium;
+  color: var(--app-text);
+}
+
+.app-empty-description {
+  @apply mt-2 text-sm;
+  color: var(--app-text-subtle);
+}
+
+.app-label {
+  @apply block text-sm font-medium mb-2;
+  color: var(--app-text-muted);
+}
+
+.app-input {
+  @apply w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500;
+  color: var(--app-text);
+  border-color: var(--app-border-strong);
+  background-color: var(--app-surface);
+}
+
+.app-input-readonly {
+  @apply w-full px-3 py-2 border rounded-md;
+  color: var(--app-text-subtle);
+  border-color: var(--app-border-strong);
+  background-color: var(--app-surface-muted);
+}
+
+.app-select {
+  @apply w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500;
+  color: var(--app-text);
+  border-color: var(--app-border-strong);
+  background-color: var(--app-surface);
+}
+
+.app-select-sm {
+  @apply rounded-md border px-2 py-1 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500;
+  color: var(--app-text-muted);
+  border-color: var(--app-border-strong);
+  background-color: var(--app-surface);
+}
+
+.app-textarea {
+  @apply w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500;
+  color: var(--app-text);
+  border-color: var(--app-border-strong);
+  background-color: var(--app-surface);
+}
+
+.app-btn-primary {
+  @apply bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+}
+
+.app-btn-primary-lg {
+  @apply bg-blue-600 text-white px-6 py-2 rounded-md hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+}
+
+.app-btn-ghost {
+  @apply transition-colors;
+  color: var(--app-text-subtle);
+}
+
+.app-btn-ghost:hover {
+  color: var(--app-text);
+  background-color: var(--app-surface-muted);
+}
+
+.app-btn-danger-text {
+  @apply text-sm;
+  color: #dc2626;
+}
+
+.app-link-primary {
+  @apply transition-colors;
+  color: var(--app-accent);
+}
+
+.app-link-primary:hover {
+  color: var(--app-accent-strong);
+}
+
+.app-pill {
+  @apply inline-flex px-2 py-1 text-xs font-medium rounded-full;
+}
+
+.app-icon-link {
+  @apply inline-flex items-center space-x-2 transition-colors;
+  color: var(--app-accent);
+}
+
+.app-icon-link:hover {
+  color: var(--app-accent-strong);
+}
+
+.app-pagination {
+  @apply px-6 py-4 flex items-center justify-between border-t;
+  border-color: var(--app-border);
+}
+
+.app-pagination-btn {
+  @apply px-3 py-1.5 text-sm rounded-md border disabled:opacity-50 disabled:cursor-not-allowed;
+  color: var(--app-text-muted);
+  border-color: var(--app-border-strong);
+  background-color: var(--app-surface);
+}
+
+.app-pagination-btn:hover:not(:disabled) {
+  background-color: var(--app-surface-muted);
+}
+
+.app-pagination-info {
+  @apply text-sm;
+  color: var(--app-text-subtle);
+}
+
+.app-alert-error {
+  @apply border rounded-md p-4;
+  background-color: #fef2f2;
+  border-color: #fecaca;
+}
+
+.app-alert-error-text {
+  @apply text-sm;
+  color: #dc2626;
+}
+
+:root[data-theme='dark'] .app-alert-error {
+  background-color: rgba(127, 29, 29, 0.22);
+  border-color: rgba(239, 68, 68, 0.35);
+}
+
+:root[data-theme='dark'] .app-alert-error-text {
+  color: #fca5a5;
+}
+
+:root[data-theme='dark'] .app-card {
+  background-color: #0f172a !important;
+  border-color: #1e293b;
+}
+
+:root[data-theme='dark'] .app-card-header {
+  border-color: #1e293b;
+}
