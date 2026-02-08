@@ -31,3 +31,24 @@ GitHub Actions workflow is defined in `.github/workflows/ci.yml` and runs:
 - `npm run typecheck`
 - `npm run build`
 - `npm audit --audit-level=high`
+
+## Production deployment
+
+GitHub Pages deployment is defined in `.github/workflows/deploy-pages.yml`.
+It deploys automatically on every push to `main`.
+
+Expected production URL:
+
+- `https://12832174-netizen.github.io/Navchalnia-practika/`
+
+## Final release checklist
+
+1. Create PR: `develop -> main`.
+2. Wait until CI is green.
+3. Merge PR.
+4. Wait for `Deploy Pages` workflow on `main`.
+5. Run smoke check on production URL:
+   - auth screen loads
+   - login works
+   - dashboards load
+   - core Supabase reads/writes work
