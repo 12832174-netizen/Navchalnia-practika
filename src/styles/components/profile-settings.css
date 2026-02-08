@@ -1,0 +1,35 @@
+.profile-settings-page {
+  display: grid;
+  gap: 1.5rem;
+}
+
+.profile-settings-card {
+  background-color: var(--app-surface);
+  border: 1px solid var(--app-border);
+  border-radius: 0.75rem;
+  box-shadow: var(--app-shadow);
+  color: var(--app-text);
+}
+
+.profile-settings-toggle {
+  width: 1rem;
+  height: 1rem;
+  accent-color: #2563eb;
+}
+
+:root[data-theme='dark'] .profile-settings-toggle {
+  accent-color: #60a5fa;
+}
+
+:root[data-theme='dark'] .profile-settings-card {
+  background-color: #0f172a !important;
+  border-color: #1e293b;
+}
+
+.profile-settings-saved {
+  color: #16a34a;
+}
+
+:root[data-theme='dark'] .profile-settings-saved {
+  color: #86efac;
+}
