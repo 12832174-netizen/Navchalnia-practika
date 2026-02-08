@@ -37,6 +37,11 @@ GitHub Actions workflow is defined in `.github/workflows/ci.yml` and runs:
 GitHub Pages deployment is defined in `.github/workflows/deploy-pages.yml`.
 It deploys automatically on every push to `main`.
 
+One-time setup in GitHub UI:
+
+1. `Settings -> Pages`
+2. `Build and deployment -> Source: GitHub Actions`
+
 Expected production URL:
 
 - `https://12832174-netizen.github.io/Navchalnia-practika/`
