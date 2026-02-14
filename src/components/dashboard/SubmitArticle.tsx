@@ -71,6 +71,21 @@ const SubmitArticle: React.FC = () => {
       return;
     }
 
+    const parsedKeywords = formData.keywords
+      .split(',')
+      .map((keyword) => keyword.trim())
+      .filter((keyword) => keyword.length > 0);
+
+    if (parsedKeywords.length === 0) {
+      setError(t('submitArticle.keywordsRequired'));
+      return;
+    }
+
+    if (!file) {
+      setError(t('submitArticle.fileRequired'));
+      return;
+    }
+
     setLoading(true);
     setError('');
 
@@ -78,20 +93,17 @@ const SubmitArticle: React.FC = () => {
       let filePath = '';
       let fileName = '';
 
-      // Upload file if selected
-      if (file) {
-        const fileName_timestamp = `${Date.now()}_${file.name}`;
-        
-        const { error: uploadError } = await supabase.storage
-          .from('articles')
-          .upload(`${user.id}/${fileName_timestamp}`, file);
+      const fileName_timestamp = `${Date.now()}_${file.name}`;
 
-        if (uploadError) throw uploadError;
+      const { error: uploadError } = await supabase.storage
+        .from('articles')
+        .upload(`${user.id}/${fileName_timestamp}`, file);
 
-        // Store storage path; signed URL is generated on demand when viewing/downloading.
-        filePath = `${user.id}/${fileName_timestamp}`;
-        fileName = file.name;
-      }
+      if (uploadError) throw uploadError;
+
+      // Store storage path; signed URL is generated on demand when viewing/downloading.
+      filePath = `${user.id}/${fileName_timestamp}`;
+      fileName = file.name;
 
       const { error: articleError } = await supabase
         .from('articles')
@@ -99,7 +111,7 @@ const SubmitArticle: React.FC = () => {
           {
             title: formData.title,
             abstract: formData.abstract,
-            keywords: formData.keywords.split(',').map(k => k.trim()).filter(k => k),
+            keywords: parsedKeywords,
             file_url: filePath,
             file_name: fileName,
             conference_id: selectedConferenceId || null,
@@ -224,6 +236,7 @@ const SubmitArticle: React.FC = () => {
             type="text"
             id="keywords"
             name="keywords"
+            required
             value={formData.keywords}
             onChange={handleInputChange}
             className="app-input"
@@ -283,7 +296,14 @@ const SubmitArticle: React.FC = () => {
         <div className="flex justify-end space-x-4 pt-6">
           <button
             type="submit"
-            disabled={loading || !formData.title || !formData.abstract || (conferences.length > 0 && !selectedConferenceId)}
+            disabled={
+              loading ||
+              !formData.title.trim() ||
+              !formData.abstract.trim() ||
+              !formData.keywords.trim() ||
+              !file ||
+              (conferences.length > 0 && !selectedConferenceId)
+            }
             className="app-btn-primary-lg flex items-center space-x-2"
           >
             <Save className="h-4 w-4" />

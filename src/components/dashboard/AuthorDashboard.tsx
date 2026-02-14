@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { FileText, Eye, Clock, CheckCircle, XCircle, AlertCircle } from 'lucide-react';
+import { FileText, Eye, Clock, CheckCircle, XCircle, AlertCircle, CalendarDays } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { supabase } from '../../lib/supabase';
 import { Article, Conference, Review, ArticleStatusHistory } from '../../types/database.types';
@@ -26,12 +26,18 @@ const REVIEW_SORT_OPTIONS = [
 ] as const;
 type ReviewSortOption = (typeof REVIEW_SORT_OPTIONS)[number];
 
-const AuthorDashboard: React.FC = () => {
+interface AuthorDashboardProps {
+  navigationEvent?: number;
+}
+
+const AuthorDashboard: React.FC<AuthorDashboardProps> = ({ navigationEvent = 0 }) => {
   const { t, i18n } = useTranslation();
   const locale = i18n.resolvedLanguage || i18n.language || 'en';
   const [articles, setArticles] = useState<Article[]>([]);
   const [reviews, setReviews] = useState<Review[]>([]);
   const [selectedArticle, setSelectedArticle] = useState<Article | null>(null);
+  const [selectedConference, setSelectedConference] = useState<Conference | null>(null);
+  const [conferenceLoading, setConferenceLoading] = useState(false);
   const [articleReviews, setArticleReviews] = useState<Review[]>([]);
   const [statusHistory, setStatusHistory] = useState<ArticleStatusHistory[]>([]);
   const [conferences, setConferences] = useState<Conference[]>([]);
@@ -53,6 +59,7 @@ const AuthorDashboard: React.FC = () => {
   const formatDate = (date: string) => formatDateByPreferences(date, locale);
   const formatDateTime = (date: string) => formatDateTimeByPreferences(date, locale);
   const getStatusLabel = (status: string) => t(`articleStatus.${status}`);
+  const getConferenceStatusLabel = (status: string) => t(`conferenceStatus.${status}`);
   const getRecommendationLabel = (recommendation: string) => t(`recommendation.${recommendation}`);
 
   const getStoragePathFromFileUrl = (fileUrl: string): string | null => {
@@ -140,6 +147,20 @@ const AuthorDashboard: React.FC = () => {
       setConferences((data as Conference[]) || []);
     } catch (fetchError) {
       console.error('Error fetching conferences:', fetchError);
+    }
+  }, []);
+
+  const fetchConferenceDetails = useCallback(async (conferenceId: string) => {
+    try {
+      setConferenceLoading(true);
+      const { data, error } = await supabase.from('conferences').select('*').eq('id', conferenceId).single();
+      if (error) throw error;
+      setSelectedConference(data as Conference);
+    } catch (error) {
+      console.error('Error fetching conference details:', error);
+      setSelectedConference(null);
+    } finally {
+      setConferenceLoading(false);
     }
   }, []);
 
@@ -234,6 +255,11 @@ const AuthorDashboard: React.FC = () => {
     fetchArticleDetails(article.id);
   };
 
+  const handleOpenConferenceFromArticle = async () => {
+    if (!selectedArticle?.conference_id) return;
+    await fetchConferenceDetails(selectedArticle.conference_id);
+  };
+
   const filteredArticles = useMemo(
     () =>
       articles.filter((article) => {
@@ -326,6 +352,13 @@ const AuthorDashboard: React.FC = () => {
   }, [reviewsSort]);
 
   useEffect(() => {
+    setSelectedArticle(null);
+    setSelectedConference(null);
+    setArticleReviews([]);
+    setStatusHistory([]);
+  }, [navigationEvent]);
+
+  useEffect(() => {
     if (pagedArticles.safePage !== articlesPage) setArticlesPage(pagedArticles.safePage);
   }, [articlesPage, pagedArticles.safePage]);
 
@@ -397,6 +430,99 @@ const AuthorDashboard: React.FC = () => {
     );
   }
 
+  if (selectedConference) {
+    return (
+      <div className="app-page">
+        <div className="flex items-center justify-between">
+          <h1 className="app-page-title">{t('authorDashboard.conferenceDetailsTitle')}</h1>
+          <button onClick={() => setSelectedConference(null)} className="app-btn-ghost">
+            {t('authorDashboard.backToArticleDetails')}
+          </button>
+        </div>
+
+        <div className="app-card">
+          <div className="app-card-header">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-xl font-semibold text-gray-900">{selectedConference.title}</h2>
+                <p className="text-sm text-gray-600 mt-1">
+                  {formatDate(selectedConference.start_date)} - {formatDate(selectedConference.end_date)}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="app-pill bg-blue-100 text-blue-700">
+                  {getConferenceStatusLabel(selectedConference.status)}
+                </span>
+                <span
+                  className={`app-pill ${
+                    selectedConference.is_public
+                      ? 'bg-green-100 text-green-700'
+                      : 'bg-gray-100 text-gray-700'
+                  }`}
+                >
+                  {selectedConference.is_public
+                    ? t('organizerDashboard.conferenceVisibilityPublic')
+                    : t('organizerDashboard.conferenceVisibilityPrivate')}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div className="app-card-body app-page">
+            <div>
+              <h3 className="text-sm font-medium text-gray-700">
+                {t('organizerDashboard.conferenceLocationLabel')}
+              </h3>
+              <p className="text-sm text-gray-900 mt-1">{selectedConference.location || t('common.noData')}</p>
+            </div>
+            <div>
+              <h3 className="text-sm font-medium text-gray-700">
+                {t('organizerDashboard.conferenceTimezoneLabel')}
+              </h3>
+              <p className="text-sm text-gray-900 mt-1">{selectedConference.timezone || t('common.noData')}</p>
+            </div>
+            <div>
+              <h3 className="text-sm font-medium text-gray-700">
+                {t('organizerDashboard.conferenceSubmissionStartLabel')}
+              </h3>
+              <p className="text-sm text-gray-900 mt-1">
+                {selectedConference.submission_start_at
+                  ? formatDateTime(selectedConference.submission_start_at)
+                  : t('common.noData')}
+              </p>
+            </div>
+            <div>
+              <h3 className="text-sm font-medium text-gray-700">
+                {t('organizerDashboard.conferenceSubmissionEndLabel')}
+              </h3>
+              <p className="text-sm text-gray-900 mt-1">
+                {selectedConference.submission_end_at
+                  ? formatDateTime(selectedConference.submission_end_at)
+                  : t('common.noData')}
+              </p>
+            </div>
+            <div>
+              <h3 className="text-sm font-medium text-gray-700">
+                {t('organizerDashboard.conferenceDescriptionLabel')}
+              </h3>
+              <p className="text-sm text-gray-900 mt-1">
+                {selectedConference.description || t('common.noData')}
+              </p>
+            </div>
+            <div>
+              <h3 className="text-sm font-medium text-gray-700">
+                {t('organizerDashboard.conferenceThesisRequirementsLabel')}
+              </h3>
+              <p className="text-sm text-gray-900 mt-1">
+                {selectedConference.thesis_requirements || t('common.noData')}
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (selectedArticle) {
     return (
       <div className="app-page">
@@ -433,6 +559,32 @@ const AuthorDashboard: React.FC = () => {
           </div>
 
           <div className="app-card-body app-page">
+            {selectedArticle.conference_id && (
+              <button
+                type="button"
+                onClick={handleOpenConferenceFromArticle}
+                disabled={conferenceLoading}
+                className="w-full text-left border border-gray-200 rounded-lg p-3 hover:bg-gray-50 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-medium text-gray-700">
+                      {t('authorDashboard.conferenceInfoTitle')}
+                    </h3>
+                    <p className="text-sm text-gray-900 mt-1">
+                      {selectedArticle.conferences?.title ||
+                        conferences.find((conference) => conference.id === selectedArticle.conference_id)?.title ||
+                        t('common.noData')}
+                    </p>
+                  </div>
+                  <span className="inline-flex items-center gap-1 text-sm text-blue-700">
+                    <CalendarDays className="h-4 w-4" />
+                    {conferenceLoading ? t('auth.submitLoading') : t('authorDashboard.openConferenceDetails')}
+                  </span>
+                </div>
+              </button>
+            )}
+
             <div>
               <h3 className="text-lg font-medium text-gray-900 mb-2">{t('submitArticle.abstractLabel')}</h3>
               <p className="text-gray-700 leading-relaxed">{selectedArticle.abstract}</p>
@@ -603,29 +755,33 @@ const AuthorDashboard: React.FC = () => {
           <>
             <div className="app-list-divider">
               {pagedArticles.pageItems.map((article) => (
-                <div key={article.id} className="app-list-item hover:bg-gray-50 transition-colors">
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1">
-                      <div className="flex items-center space-x-3">
-                        <h3 className="text-lg font-medium text-gray-900">{article.title}</h3>
-                        {getStatusIcon(article.status)}
-                      </div>
-                      <p className="mt-2 text-sm text-gray-600 line-clamp-2">{article.abstract}</p>
-                      <div className="mt-3 flex items-center space-x-4">
-                        <span className={`app-pill ${getStatusColor(article.status)}`}>
-                          {getStatusLabel(article.status)}
-                        </span>
-                        <span className="text-sm text-gray-500">
-                          {t('common.submittedOn', { date: formatDate(article.submitted_at) })}
-                        </span>
-                      </div>
+                <div
+                  key={article.id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => handleOpenArticle(article)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      handleOpenArticle(article);
+                    }
+                  }}
+                  className="app-list-item hover:bg-gray-50 transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                >
+                  <div className="flex-1">
+                    <div className="flex items-center space-x-3">
+                      <h3 className="text-lg font-medium text-gray-900">{article.title}</h3>
+                      {getStatusIcon(article.status)}
                     </div>
-                    <button
-                      onClick={() => handleOpenArticle(article)}
-                      className="ml-4 app-btn-primary"
-                    >
-                      {t('authorDashboard.viewArticleButton')}
-                    </button>
+                    <p className="mt-2 text-sm text-gray-600 line-clamp-2">{article.abstract}</p>
+                    <div className="mt-3 flex items-center space-x-4">
+                      <span className={`app-pill ${getStatusColor(article.status)}`}>
+                        {getStatusLabel(article.status)}
+                      </span>
+                      <span className="text-sm text-gray-500">
+                        {t('common.submittedOn', { date: formatDate(article.submitted_at) })}
+                      </span>
+                    </div>
                   </div>
                 </div>
               ))}

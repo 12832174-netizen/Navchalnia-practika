@@ -15,7 +15,7 @@ import { UserRole } from './types/database.types';
 const allowedPagesByRole: Record<UserRole, string[]> = {
   author: ['dashboard', 'submit', 'profile', 'notifications'],
   reviewer: ['reviews', 'articles', 'profile', 'notifications'],
-  organizer: ['dashboard', 'reviews', 'manage', 'roles', 'profile', 'notifications'],
+  organizer: ['dashboard', 'conferences', 'reviews', 'manage', 'roles', 'profile', 'notifications'],
 };
 
 const getDefaultPageForRole = (role: UserRole) => (role === 'reviewer' ? 'reviews' : 'dashboard');
@@ -24,6 +24,7 @@ const AppContent: React.FC = () => {
   const { t, i18n } = useTranslation();
   const { user, profile, loading } = useAuth();
   const [currentPage, setCurrentPage] = useState('dashboard');
+  const [navigationEvent, setNavigationEvent] = useState(0);
 
   const normalizedCurrentPage =
     profile && !allowedPagesByRole[profile.role].includes(currentPage)
@@ -53,25 +54,47 @@ const AppContent: React.FC = () => {
     return <AuthForm />;
   }
 
+  const handlePageChange = (page: string) => {
+    setCurrentPage(page);
+    setNavigationEvent((prev) => prev + 1);
+  };
+
   const renderContent = () => {
     switch (normalizedCurrentPage) {
       case 'dashboard':
-        if (profile.role === 'author') return <AuthorDashboard />;
-        if (profile.role === 'reviewer') return <ReviewerDashboard currentPage="reviews" />;
-        if (profile.role === 'organizer') return <OrganizerDashboard currentPage="dashboard" />;
+        if (profile.role === 'author') return <AuthorDashboard navigationEvent={navigationEvent} />;
+        if (profile.role === 'reviewer') {
+          return <ReviewerDashboard currentPage="reviews" navigationEvent={navigationEvent} />;
+        }
+        if (profile.role === 'organizer') {
+          return <OrganizerDashboard currentPage="dashboard" navigationEvent={navigationEvent} />;
+        }
         break;
       case 'submit':
         if (profile.role === 'author') return <SubmitArticle />;
         break;
       case 'articles':
-        if (profile.role === 'reviewer') return <ReviewerDashboard currentPage="articles" />;
+        if (profile.role === 'reviewer') {
+          return <ReviewerDashboard currentPage="articles" navigationEvent={navigationEvent} />;
+        }
         break;
       case 'reviews':
-        if (profile.role === 'reviewer') return <ReviewerDashboard currentPage="reviews" />;
-        if (profile.role === 'organizer') return <OrganizerDashboard currentPage="reviews" />;
+        if (profile.role === 'reviewer') {
+          return <ReviewerDashboard currentPage="reviews" navigationEvent={navigationEvent} />;
+        }
+        if (profile.role === 'organizer') {
+          return <OrganizerDashboard currentPage="reviews" navigationEvent={navigationEvent} />;
+        }
+        break;
+      case 'conferences':
+        if (profile.role === 'organizer') {
+          return <OrganizerDashboard currentPage="conferences" navigationEvent={navigationEvent} />;
+        }
         break;
       case 'manage':
-        if (profile.role === 'organizer') return <OrganizerDashboard currentPage="manage" />;
+        if (profile.role === 'organizer') {
+          return <OrganizerDashboard currentPage="manage" navigationEvent={navigationEvent} />;
+        }
         break;
       case 'roles':
         if (profile.role === 'organizer') return <RoleManagementPage />;
@@ -84,12 +107,20 @@ const AppContent: React.FC = () => {
         break;
     }
 
-    if (profile.role === 'reviewer') return <ReviewerDashboard currentPage="reviews" />;
-    if (profile.role === 'organizer') return <OrganizerDashboard currentPage="dashboard" />;
-    return <AuthorDashboard />;
+    if (profile.role === 'reviewer') {
+      return <ReviewerDashboard currentPage="reviews" navigationEvent={navigationEvent} />;
+    }
+    if (profile.role === 'organizer') {
+      return <OrganizerDashboard currentPage="dashboard" navigationEvent={navigationEvent} />;
+    }
+    return <AuthorDashboard navigationEvent={navigationEvent} />;
   };
 
-  return <Layout currentPage={normalizedCurrentPage} onPageChange={setCurrentPage}>{renderContent()}</Layout>;
+  return (
+    <Layout currentPage={normalizedCurrentPage} onPageChange={handlePageChange}>
+      {renderContent()}
+    </Layout>
+  );
 };
 
 function App() {

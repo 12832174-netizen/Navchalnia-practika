@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { AlertCircle, FileText, Search, Star, Send } from 'lucide-react';
+import { AlertCircle, CalendarDays, FileText, Search, Star, Send } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { supabase } from '../../lib/supabase';
 import { Article, Conference, Review } from '../../types/database.types';
@@ -7,6 +7,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { paginateItems } from '../../utils/pagination';
 import {
   formatDateByPreferences,
+  formatDateTimeByPreferences,
   getStoredListSortOption,
   getStoredPageSize,
   setListSortPreference,
@@ -14,6 +15,7 @@ import {
 
 interface ReviewerDashboardProps {
   currentPage?: string;
+  navigationEvent?: number;
 }
 
 const ARTICLE_SORT_OPTIONS = ['date_desc', 'date_asc', 'title_asc', 'title_desc'] as const;
@@ -29,13 +31,20 @@ const REVIEW_SORT_OPTIONS = [
 ] as const;
 type ReviewSortOption = (typeof REVIEW_SORT_OPTIONS)[number];
 
-const ReviewerDashboard: React.FC<ReviewerDashboardProps> = ({ currentPage = 'reviews' }) => {
+const ReviewerDashboard: React.FC<ReviewerDashboardProps> = ({
+  currentPage = 'reviews',
+  navigationEvent = 0,
+}) => {
   const { t, i18n } = useTranslation();
   const locale = i18n.resolvedLanguage || i18n.language || 'en';
   const activePage = currentPage === 'articles' ? 'articles' : 'reviews';
   const [articles, setArticles] = useState<Article[]>([]);
   const [reviews, setReviews] = useState<Review[]>([]);
   const [selectedArticle, setSelectedArticle] = useState<Article | null>(null);
+  const [selectedReview, setSelectedReview] = useState<Review | null>(null);
+  const [articleReviews, setArticleReviews] = useState<Review[]>([]);
+  const [selectedConference, setSelectedConference] = useState<Conference | null>(null);
+  const [conferenceLoading, setConferenceLoading] = useState(false);
   const [reviewForm, setReviewForm] = useState({
     content: '',
     rating: 3,
@@ -66,7 +75,9 @@ const ReviewerDashboard: React.FC<ReviewerDashboardProps> = ({ currentPage = 're
   const pageSize = getStoredPageSize();
 
   const formatDate = (date: string) => formatDateByPreferences(date, locale);
+  const formatDateTime = (date: string) => formatDateTimeByPreferences(date, locale);
   const getRecommendationLabel = (recommendation: string) => t(`recommendation.${recommendation}`);
+  const getConferenceStatusLabel = (status: string) => t(`conferenceStatus.${status}`);
   const getAssignmentDueAt = (articleId: string) => assignmentDeadlines[articleId];
   const isAssignmentOverdue = (articleId: string) => {
     const dueAt = getAssignmentDueAt(articleId);
@@ -195,6 +206,60 @@ const ReviewerDashboard: React.FC<ReviewerDashboardProps> = ({ currentPage = 're
     }
   }, []);
 
+  const fetchArticleReviews = useCallback(async (articleId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('reviews')
+        .select(`
+          *,
+          profiles!reviews_reviewer_id_fkey(full_name)
+        `)
+        .eq('article_id', articleId)
+        .eq('status', 'submitted')
+        .order('submitted_at', { ascending: false });
+
+      if (error) throw error;
+      setArticleReviews((data as Review[]) || []);
+    } catch (error) {
+      console.error('Error fetching article reviews:', error);
+      setArticleReviews([]);
+    }
+  }, []);
+
+  const fetchConferenceDetails = useCallback(async (conferenceId: string) => {
+    try {
+      setConferenceLoading(true);
+      const { data, error } = await supabase.from('conferences').select('*').eq('id', conferenceId).single();
+      if (error) throw error;
+      setSelectedConference(data as Conference);
+    } catch (error) {
+      console.error('Error fetching conference details:', error);
+      setSelectedConference(null);
+    } finally {
+      setConferenceLoading(false);
+    }
+  }, []);
+
+  const fetchArticleById = useCallback(async (articleId: string): Promise<Article | null> => {
+    try {
+      const { data, error } = await supabase
+        .from('articles')
+        .select(`
+          *,
+          profiles:author_id(full_name, institution),
+          conferences:conference_id(id, title)
+        `)
+        .eq('id', articleId)
+        .single();
+
+      if (error) throw error;
+      return data as Article;
+    } catch (error) {
+      console.error('Error fetching article details:', error);
+      return null;
+    }
+  }, []);
+
   useEffect(() => {
     if (user) {
       fetchAvailableArticles();
@@ -205,6 +270,9 @@ const ReviewerDashboard: React.FC<ReviewerDashboardProps> = ({ currentPage = 're
 
   useEffect(() => {
     setSelectedArticle(null);
+    setSelectedReview(null);
+    setArticleReviews([]);
+    setSelectedConference(null);
   }, [activePage]);
 
   useEffect(() => {
@@ -222,6 +290,18 @@ const ReviewerDashboard: React.FC<ReviewerDashboardProps> = ({ currentPage = 're
   useEffect(() => {
     setListSortPreference('reviewer.reviews', reviewsSort);
   }, [reviewsSort]);
+
+  useEffect(() => {
+    setSelectedArticle(null);
+    setSelectedReview(null);
+    setArticleReviews([]);
+    setSelectedConference(null);
+    setReviewForm({
+      content: '',
+      rating: 3,
+      recommendation: 'accept_with_comments',
+    });
+  }, [navigationEvent]);
 
   useEffect(() => {
     let cancelled = false;
@@ -295,6 +375,8 @@ const ReviewerDashboard: React.FC<ReviewerDashboardProps> = ({ currentPage = 're
       if (statusError) throw statusError;
 
       setSelectedArticle(null);
+      setSelectedReview(null);
+      setArticleReviews([]);
       setReviewForm({ content: '', rating: 3, recommendation: 'accept_with_comments' });
       await fetchAvailableArticles();
       await fetchMyReviews();
@@ -303,6 +385,25 @@ const ReviewerDashboard: React.FC<ReviewerDashboardProps> = ({ currentPage = 're
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const handleOpenPendingArticle = (article: Article) => {
+    setSelectedReview(null);
+    setSelectedArticle(article);
+    void fetchArticleReviews(article.id);
+  };
+
+  const handleOpenReviewedArticle = async (review: Review) => {
+    const article = await fetchArticleById(review.article_id);
+    if (!article) return;
+    setSelectedReview(review);
+    setSelectedArticle(article);
+    await fetchArticleReviews(article.id);
+  };
+
+  const handleOpenConferenceFromArticle = async () => {
+    if (!selectedArticle?.conference_id) return;
+    await fetchConferenceDetails(selectedArticle.conference_id);
   };
 
   const filteredArticles = useMemo(() => {
@@ -435,13 +536,17 @@ const ReviewerDashboard: React.FC<ReviewerDashboardProps> = ({ currentPage = 're
     );
   }
 
-  if (selectedArticle) {
+  if (selectedArticle && !selectedConference) {
     return (
       <div className="app-page">
         <div className="flex items-center justify-between">
           <h1 className="app-page-title">{t('reviewerDashboard.reviewArticleTitle')}</h1>
           <button
-            onClick={() => setSelectedArticle(null)}
+            onClick={() => {
+              setSelectedArticle(null);
+              setSelectedReview(null);
+              setArticleReviews([]);
+            }}
             className="app-btn-ghost"
           >
             {t('common.backToArticles')}
@@ -472,6 +577,34 @@ const ReviewerDashboard: React.FC<ReviewerDashboardProps> = ({ currentPage = 're
           </div>
 
           <div className="app-list-item">
+            {selectedArticle.conference_id && (
+              <button
+                type="button"
+                onClick={() => {
+                  void handleOpenConferenceFromArticle();
+                }}
+                disabled={conferenceLoading}
+                className="w-full text-left border border-gray-200 rounded-lg p-3 hover:bg-gray-50 transition-colors disabled:opacity-60 disabled:cursor-not-allowed mb-6"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-medium text-gray-700">
+                      {t('authorDashboard.conferenceInfoTitle')}
+                    </h3>
+                    <p className="text-sm text-gray-900 mt-1">
+                      {selectedArticle.conferences?.title ||
+                        conferences.find((conference) => conference.id === selectedArticle.conference_id)?.title ||
+                        t('common.noData')}
+                    </p>
+                  </div>
+                  <span className="inline-flex items-center gap-1 text-sm text-blue-700">
+                    <CalendarDays className="h-4 w-4" />
+                    {conferenceLoading ? t('auth.submitLoading') : t('authorDashboard.openConferenceDetails')}
+                  </span>
+                </div>
+              </button>
+            )}
+
             <div className="mb-6">
               <h3 className="text-lg font-medium text-gray-900 mb-2">{t('submitArticle.abstractLabel')}</h3>
               <p className="text-gray-700 leading-relaxed">{selectedArticle.abstract}</p>
@@ -515,80 +648,218 @@ const ReviewerDashboard: React.FC<ReviewerDashboardProps> = ({ currentPage = 're
           </div>
         </div>
 
-        <form onSubmit={handleReviewSubmit} className="app-card app-list-item">
-          <h3 className="text-lg font-medium text-gray-900 mb-4">{t('reviewerDashboard.submitReviewTitle')}</h3>
+        {selectedReview ? (
+          <div className="app-card app-list-item">
+            <h3 className="text-lg font-medium text-gray-900 mb-4">{t('reviewerDashboard.myReviewsSectionTitle')}</h3>
+            {articleReviews.length === 0 ? (
+              <p className="text-sm text-gray-500">{t('reviewerDashboard.emptyReviewsDescription')}</p>
+            ) : (
+              <div className="space-y-4">
+                {articleReviews.map((review) => (
+                  <div key={review.id} className="border border-gray-200 rounded-md p-3">
+                    <p className="text-sm text-gray-600">
+                      {t('common.by', { name: review.profiles?.full_name ?? t('common.noData') })}
+                      {' - '}
+                      {t('common.reviewedOn', {
+                        date: formatDate(review.submitted_at || review.created_at),
+                      })}
+                    </p>
+                    <div className="mt-2 flex items-center space-x-4">
+                      <div className="flex items-center space-x-1">
+                        {[1, 2, 3, 4, 5].map((rating) => (
+                          <Star
+                            key={rating}
+                            className={`h-5 w-5 ${
+                              rating <= review.rating ? 'text-yellow-400 fill-current' : 'text-gray-300'
+                            }`}
+                          />
+                        ))}
+                      </div>
+                      <span
+                        className={`app-pill ${
+                          review.recommendation === 'accept'
+                            ? 'bg-green-100 text-green-800'
+                            : review.recommendation === 'accept_with_comments'
+                              ? 'bg-amber-100 text-amber-800'
+                              : 'bg-red-100 text-red-800'
+                        }`}
+                      >
+                        {getRecommendationLabel(review.recommendation)}
+                      </span>
+                    </div>
+                    <p className="mt-3 text-sm text-gray-700">{review.content}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : (
+          <form onSubmit={handleReviewSubmit} className="app-card app-list-item">
+            <h3 className="text-lg font-medium text-gray-900 mb-4">{t('reviewerDashboard.submitReviewTitle')}</h3>
 
-          <div className="space-y-4">
-            <div>
-              <label className="app-label">
-                {t('reviewerDashboard.reviewContentLabel')}
-              </label>
-              <textarea
-                required
-                rows={8}
-                value={reviewForm.content}
-                onChange={(event) => setReviewForm((prev) => ({ ...prev, content: event.target.value }))}
-                className="app-input"
-                placeholder={t('reviewerDashboard.reviewContentPlaceholder')}
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-4">
               <div>
                 <label className="app-label">
-                  {t('reviewerDashboard.ratingLabel')}
+                  {t('reviewerDashboard.reviewContentLabel')}
                 </label>
-                <div className="flex items-center space-x-2">
-                  {[1, 2, 3, 4, 5].map((rating) => (
-                    <button
-                      key={rating}
-                      type="button"
-                      onClick={() => setReviewForm((prev) => ({ ...prev, rating }))}
-                      className="p-1"
-                    >
-                      <Star
-                        className={`h-6 w-6 ${
-                          rating <= reviewForm.rating ? 'text-yellow-400 fill-current' : 'text-gray-300'
-                        }`}
-                      />
-                    </button>
-                  ))}
-                  <span className="text-sm text-gray-600 ml-2">{reviewForm.rating}/5</span>
+                <textarea
+                  required
+                  rows={8}
+                  value={reviewForm.content}
+                  onChange={(event) => setReviewForm((prev) => ({ ...prev, content: event.target.value }))}
+                  className="app-input"
+                  placeholder={t('reviewerDashboard.reviewContentPlaceholder')}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="app-label">
+                    {t('reviewerDashboard.ratingLabel')}
+                  </label>
+                  <div className="flex items-center space-x-2">
+                    {[1, 2, 3, 4, 5].map((rating) => (
+                      <button
+                        key={rating}
+                        type="button"
+                        onClick={() => setReviewForm((prev) => ({ ...prev, rating }))}
+                        className="p-1"
+                      >
+                        <Star
+                          className={`h-6 w-6 ${
+                            rating <= reviewForm.rating ? 'text-yellow-400 fill-current' : 'text-gray-300'
+                          }`}
+                        />
+                      </button>
+                    ))}
+                    <span className="text-sm text-gray-600 ml-2">{reviewForm.rating}/5</span>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="app-label">
+                    {t('reviewerDashboard.recommendationLabel')}
+                  </label>
+                  <select
+                    value={reviewForm.recommendation}
+                    onChange={(event) =>
+                      setReviewForm((prev) => ({ ...prev, recommendation: event.target.value }))
+                    }
+                    className="app-input"
+                  >
+                    <option value="accept">{t('recommendation.accept')}</option>
+                    <option value="accept_with_comments">{t('recommendation.accept_with_comments')}</option>
+                    <option value="reject">{t('recommendation.reject')}</option>
+                  </select>
                 </div>
               </div>
 
+              <button
+                type="submit"
+                disabled={submitting || !reviewForm.content.trim()}
+                className="app-btn-primary-lg flex items-center space-x-2"
+              >
+                <Send className="h-4 w-4" />
+                <span>
+                  {submitting
+                    ? t('reviewerDashboard.submitReviewLoading')
+                    : t('reviewerDashboard.submitReviewButton')}
+                </span>
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
+    );
+  }
+
+  if (selectedConference) {
+    return (
+      <div className="app-page">
+        <div className="flex items-center justify-between">
+          <h1 className="app-page-title">{t('authorDashboard.conferenceDetailsTitle')}</h1>
+          <button onClick={() => setSelectedConference(null)} className="app-btn-ghost">
+            {t('authorDashboard.backToArticleDetails')}
+          </button>
+        </div>
+
+        <div className="app-card">
+          <div className="app-card-header">
+            <div className="flex items-center justify-between gap-3">
               <div>
-                <label className="app-label">
-                  {t('reviewerDashboard.recommendationLabel')}
-                </label>
-                <select
-                  value={reviewForm.recommendation}
-                  onChange={(event) =>
-                    setReviewForm((prev) => ({ ...prev, recommendation: event.target.value }))
-                  }
-                  className="app-input"
+                <h2 className="text-xl font-semibold text-gray-900">{selectedConference.title}</h2>
+                <p className="text-sm text-gray-600 mt-1">
+                  {formatDate(selectedConference.start_date)} - {formatDate(selectedConference.end_date)}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="app-pill bg-blue-100 text-blue-700">
+                  {getConferenceStatusLabel(selectedConference.status)}
+                </span>
+                <span
+                  className={`app-pill ${
+                    selectedConference.is_public ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'
+                  }`}
                 >
-                  <option value="accept">{t('recommendation.accept')}</option>
-                  <option value="accept_with_comments">{t('recommendation.accept_with_comments')}</option>
-                  <option value="reject">{t('recommendation.reject')}</option>
-                </select>
+                  {selectedConference.is_public
+                    ? t('organizerDashboard.conferenceVisibilityPublic')
+                    : t('organizerDashboard.conferenceVisibilityPrivate')}
+                </span>
               </div>
             </div>
-
-            <button
-              type="submit"
-              disabled={submitting || !reviewForm.content.trim()}
-              className="app-btn-primary-lg flex items-center space-x-2"
-            >
-              <Send className="h-4 w-4" />
-              <span>
-                {submitting
-                  ? t('reviewerDashboard.submitReviewLoading')
-                  : t('reviewerDashboard.submitReviewButton')}
-              </span>
-            </button>
           </div>
-        </form>
+
+          <div className="app-card-body app-page">
+            <div>
+              <h3 className="text-sm font-medium text-gray-700">
+                {t('organizerDashboard.conferenceLocationLabel')}
+              </h3>
+              <p className="text-sm text-gray-900 mt-1">{selectedConference.location || t('common.noData')}</p>
+            </div>
+            <div>
+              <h3 className="text-sm font-medium text-gray-700">
+                {t('organizerDashboard.conferenceTimezoneLabel')}
+              </h3>
+              <p className="text-sm text-gray-900 mt-1">{selectedConference.timezone || t('common.noData')}</p>
+            </div>
+            <div>
+              <h3 className="text-sm font-medium text-gray-700">
+                {t('organizerDashboard.conferenceSubmissionStartLabel')}
+              </h3>
+              <p className="text-sm text-gray-900 mt-1">
+                {selectedConference.submission_start_at
+                  ? formatDateTime(selectedConference.submission_start_at)
+                  : t('common.noData')}
+              </p>
+            </div>
+            <div>
+              <h3 className="text-sm font-medium text-gray-700">
+                {t('organizerDashboard.conferenceSubmissionEndLabel')}
+              </h3>
+              <p className="text-sm text-gray-900 mt-1">
+                {selectedConference.submission_end_at
+                  ? formatDateTime(selectedConference.submission_end_at)
+                  : t('common.noData')}
+              </p>
+            </div>
+            <div>
+              <h3 className="text-sm font-medium text-gray-700">
+                {t('organizerDashboard.conferenceDescriptionLabel')}
+              </h3>
+              <p className="text-sm text-gray-900 mt-1">
+                {selectedConference.description || t('common.noData')}
+              </p>
+            </div>
+            <div>
+              <h3 className="text-sm font-medium text-gray-700">
+                {t('organizerDashboard.conferenceThesisRequirementsLabel')}
+              </h3>
+              <p className="text-sm text-gray-900 mt-1">
+                {selectedConference.thesis_requirements || t('common.noData')}
+              </p>
+            </div>
+          </div>
+        </div>
       </div>
     );
   }
@@ -690,7 +961,7 @@ const ReviewerDashboard: React.FC<ReviewerDashboardProps> = ({ currentPage = 're
                         )}
                       </div>
                       <button
-                        onClick={() => setSelectedArticle(article)}
+                        onClick={() => handleOpenPendingArticle(article)}
                         className="ml-4 app-btn-primary"
                       >
                         {t('reviewerDashboard.reviewArticleButton')}
@@ -763,7 +1034,21 @@ const ReviewerDashboard: React.FC<ReviewerDashboardProps> = ({ currentPage = 're
             <>
               <div className="app-list-divider">
                 {pagedReviews.pageItems.map((review) => (
-                  <div key={review.id} className="app-list-item">
+                  <div
+                    key={review.id}
+                    className="app-list-item hover:bg-gray-50 transition-colors cursor-pointer"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => {
+                      void handleOpenReviewedArticle(review);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        void handleOpenReviewedArticle(review);
+                      }
+                    }}
+                  >
                     <div className="flex justify-between items-start">
                       <div className="flex-1">
                         <h4 className="text-md font-medium text-gray-900">{review.articles?.title}</h4>

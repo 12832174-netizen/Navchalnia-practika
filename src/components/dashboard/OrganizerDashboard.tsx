@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle,
+  CalendarDays,
+  ChevronDown,
   CheckCircle,
   Clock,
   Eye,
@@ -18,6 +20,8 @@ import {
   ArticleStatus,
   ArticleStatusHistory,
   Conference,
+  ConferenceSection,
+  ConferenceStatus,
   Profile,
   Review,
 } from '../../types/database.types';
@@ -34,7 +38,16 @@ import {
 } from '../../utils/preferences';
 
 interface OrganizerDashboardProps {
-  currentPage?: 'dashboard' | 'reviews' | 'manage';
+  currentPage?: 'dashboard' | 'conferences' | 'reviews' | 'manage';
+  navigationEvent?: number;
+}
+
+interface ConferenceArticleSummary {
+  id: string;
+  title: string;
+  status: ArticleStatus;
+  submitted_at: string;
+  profiles?: Pick<Profile, 'full_name'> | null;
 }
 
 const ARTICLE_SORT_OPTIONS = ['date_desc', 'date_asc', 'title_asc', 'title_desc'] as const;
@@ -49,8 +62,21 @@ const REVIEW_SORT_OPTIONS = [
   'rating_asc',
 ] as const;
 type ReviewSortOption = (typeof REVIEW_SORT_OPTIONS)[number];
+const CONFERENCE_SORT_OPTIONS = ['start_desc', 'start_asc', 'title_asc', 'title_desc'] as const;
+type ConferenceSortOption = (typeof CONFERENCE_SORT_OPTIONS)[number];
+const CONFERENCE_STATUS_OPTIONS: ConferenceStatus[] = [
+  'draft',
+  'announced',
+  'submission_open',
+  'reviewing',
+  'closed',
+  'archived',
+];
 
-const OrganizerDashboard: React.FC<OrganizerDashboardProps> = ({ currentPage = 'dashboard' }) => {
+const OrganizerDashboard: React.FC<OrganizerDashboardProps> = ({
+  currentPage = 'dashboard',
+  navigationEvent = 0,
+}) => {
   const { t, i18n } = useTranslation();
   const locale = i18n.resolvedLanguage || i18n.language || 'en';
   const { user } = useAuth();
@@ -58,6 +84,10 @@ const OrganizerDashboard: React.FC<OrganizerDashboardProps> = ({ currentPage = '
   const [articles, setArticles] = useState<Article[]>([]);
   const [reviews, setReviews] = useState<Review[]>([]);
   const [conferences, setConferences] = useState<Conference[]>([]);
+  const [selectedConference, setSelectedConference] = useState<Conference | null>(null);
+  const [selectedConferenceSections, setSelectedConferenceSections] = useState<ConferenceSection[]>([]);
+  const [selectedConferenceArticles, setSelectedConferenceArticles] = useState<ConferenceArticleSummary[]>([]);
+  const [conferenceDetailsLoading, setConferenceDetailsLoading] = useState(false);
   const [reviewers, setReviewers] = useState<Profile[]>([]);
   const [assignments, setAssignments] = useState<ArticleReviewAssignment[]>([]);
   const [selectedArticle, setSelectedArticle] = useState<Article | null>(null);
@@ -76,6 +106,11 @@ const OrganizerDashboard: React.FC<OrganizerDashboardProps> = ({ currentPage = '
   const [articleStatusFilter, setArticleStatusFilter] = useState<'all' | ArticleStatus>('all');
   const [conferenceFilter, setConferenceFilter] = useState<string>('all');
   const [reviewsSearch, setReviewsSearch] = useState('');
+  const [conferenceSearch, setConferenceSearch] = useState('');
+  const [conferenceStatusFilter, setConferenceStatusFilter] = useState<'all' | ConferenceStatus>('all');
+  const [conferenceVisibilityFilter, setConferenceVisibilityFilter] = useState<
+    'all' | 'public' | 'private'
+  >('all');
   const [recommendationFilter, setRecommendationFilter] = useState<
     'all' | 'accept' | 'accept_with_comments' | 'reject'
   >('all');
@@ -85,8 +120,12 @@ const OrganizerDashboard: React.FC<OrganizerDashboardProps> = ({ currentPage = '
   const [reviewsSort, setReviewsSort] = useState<ReviewSortOption>(() =>
     getStoredListSortOption('organizer.reviews', REVIEW_SORT_OPTIONS, 'date_desc'),
   );
+  const [conferenceSort, setConferenceSort] = useState<ConferenceSortOption>(() =>
+    getStoredListSortOption('organizer.conferences', CONFERENCE_SORT_OPTIONS, 'start_desc'),
+  );
   const [articlePage, setArticlePage] = useState(1);
   const [reviewsPage, setReviewsPage] = useState(1);
+  const [conferencePage, setConferencePage] = useState(1);
 
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState(false);
@@ -103,6 +142,22 @@ const OrganizerDashboard: React.FC<OrganizerDashboardProps> = ({ currentPage = '
   const [generatingProceedings, setGeneratingProceedings] = useState(false);
   const [proceedingsMessage, setProceedingsMessage] = useState('');
   const [proceedingsError, setProceedingsError] = useState('');
+  const defaultConferenceTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Europe/Kyiv';
+  const [conferenceTitle, setConferenceTitle] = useState('');
+  const [conferenceDescription, setConferenceDescription] = useState('');
+  const [conferenceThesisRequirements, setConferenceThesisRequirements] = useState('');
+  const [conferenceStartDate, setConferenceStartDate] = useState('');
+  const [conferenceEndDate, setConferenceEndDate] = useState('');
+  const [conferenceSubmissionStartAt, setConferenceSubmissionStartAt] = useState('');
+  const [conferenceSubmissionEndAt, setConferenceSubmissionEndAt] = useState('');
+  const [conferenceTimezone, setConferenceTimezone] = useState(defaultConferenceTimezone);
+  const [conferenceLocation, setConferenceLocation] = useState('');
+  const [conferenceStatus, setConferenceStatus] = useState<ConferenceStatus>('draft');
+  const [conferenceIsPublic, setConferenceIsPublic] = useState(true);
+  const [conferenceCreateExpanded, setConferenceCreateExpanded] = useState(false);
+  const [creatingConference, setCreatingConference] = useState(false);
+  const [conferenceCreateMessage, setConferenceCreateMessage] = useState('');
+  const [conferenceCreateError, setConferenceCreateError] = useState('');
 
   const [articleFileUrl, setArticleFileUrl] = useState<string | null>(null);
   const [articleFileLoading, setArticleFileLoading] = useState(false);
@@ -111,6 +166,7 @@ const OrganizerDashboard: React.FC<OrganizerDashboardProps> = ({ currentPage = '
   const formatDate = (date: string) => formatDateByPreferences(date, locale);
   const formatDateTime = (date: string) => formatDateTimeByPreferences(date, locale);
   const getStatusLabel = (status: string) => t(`articleStatus.${status}`);
+  const getConferenceStatusLabel = (status: ConferenceStatus) => t(`conferenceStatus.${status}`);
   const getRecommendationLabel = (recommendation: string) => t(`recommendation.${recommendation}`);
 
   const toInputDateTime = (value?: string) => {
@@ -125,6 +181,19 @@ const OrganizerDashboard: React.FC<OrganizerDashboardProps> = ({ currentPage = '
   };
 
   const fromInputDateTime = (value: string) => (value ? new Date(value).toISOString() : null);
+  const resetConferenceForm = () => {
+    setConferenceTitle('');
+    setConferenceDescription('');
+    setConferenceThesisRequirements('');
+    setConferenceStartDate('');
+    setConferenceEndDate('');
+    setConferenceSubmissionStartAt('');
+    setConferenceSubmissionEndAt('');
+    setConferenceTimezone(defaultConferenceTimezone);
+    setConferenceLocation('');
+    setConferenceStatus('draft');
+    setConferenceIsPublic(true);
+  };
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -160,6 +229,24 @@ const OrganizerDashboard: React.FC<OrganizerDashboardProps> = ({ currentPage = '
     }
   };
 
+  const getConferenceStatusColor = (status: ConferenceStatus) => {
+    switch (status) {
+      case 'draft':
+        return 'bg-gray-100 text-gray-700';
+      case 'announced':
+        return 'bg-indigo-100 text-indigo-700';
+      case 'submission_open':
+        return 'bg-blue-100 text-blue-700';
+      case 'reviewing':
+        return 'bg-amber-100 text-amber-700';
+      case 'closed':
+        return 'bg-rose-100 text-rose-700';
+      case 'archived':
+      default:
+        return 'bg-slate-100 text-slate-700';
+    }
+  };
+
   useEffect(() => {
     fetchAllArticles();
     fetchAllReviews();
@@ -169,6 +256,10 @@ const OrganizerDashboard: React.FC<OrganizerDashboardProps> = ({ currentPage = '
 
   useEffect(() => {
     setSelectedArticle(null);
+    setSelectedConference(null);
+    setSelectedConferenceSections([]);
+    setSelectedConferenceArticles([]);
+    setConferenceDetailsLoading(false);
     setArticleReviews([]);
     setStatusHistory([]);
     setAssignments([]);
@@ -182,6 +273,27 @@ const OrganizerDashboard: React.FC<OrganizerDashboardProps> = ({ currentPage = '
   }, [currentPage]);
 
   useEffect(() => {
+    if (currentPage === 'conferences') {
+      setSelectedConference(null);
+      setSelectedConferenceSections([]);
+      setSelectedConferenceArticles([]);
+      setConferenceDetailsLoading(false);
+      return;
+    }
+
+    if (currentPage === 'dashboard' || currentPage === 'manage') {
+      setSelectedConference(null);
+      setSelectedConferenceSections([]);
+      setSelectedConferenceArticles([]);
+      setConferenceDetailsLoading(false);
+      setSelectedArticle(null);
+      setArticleReviews([]);
+      setStatusHistory([]);
+      setAssignments([]);
+    }
+  }, [navigationEvent, currentPage]);
+
+  useEffect(() => {
     setArticlePage(1);
   }, [articleSearch, articleStatusFilter, conferenceFilter, articleSort]);
 
@@ -190,12 +302,20 @@ const OrganizerDashboard: React.FC<OrganizerDashboardProps> = ({ currentPage = '
   }, [reviewsSearch, recommendationFilter, conferenceFilter, reviewsSort]);
 
   useEffect(() => {
+    setConferencePage(1);
+  }, [conferenceSearch, conferenceStatusFilter, conferenceVisibilityFilter, conferenceSort]);
+
+  useEffect(() => {
     setListSortPreference('organizer.articles', articleSort);
   }, [articleSort]);
 
   useEffect(() => {
     setListSortPreference('organizer.reviews', reviewsSort);
   }, [reviewsSort]);
+
+  useEffect(() => {
+    setListSortPreference('organizer.conferences', conferenceSort);
+  }, [conferenceSort]);
 
   useEffect(() => {
     if (!proceedingsConferenceId && conferences.length > 0) {
@@ -208,6 +328,12 @@ const OrganizerDashboard: React.FC<OrganizerDashboardProps> = ({ currentPage = '
     const timeoutId = window.setTimeout(() => setProceedingsMessage(''), 5000);
     return () => window.clearTimeout(timeoutId);
   }, [proceedingsMessage]);
+
+  useEffect(() => {
+    if (!conferenceCreateMessage) return;
+    const timeoutId = window.setTimeout(() => setConferenceCreateMessage(''), 5000);
+    return () => window.clearTimeout(timeoutId);
+  }, [conferenceCreateMessage]);
 
   useEffect(() => {
     if (!selectedArticle) return;
@@ -296,12 +422,72 @@ const OrganizerDashboard: React.FC<OrganizerDashboardProps> = ({ currentPage = '
     try {
       const { data, error } = await supabase
         .from('conferences')
-        .select('id, title, start_date, end_date, status, is_public')
+        .select('*')
         .order('start_date', { ascending: false });
       if (error) throw error;
       setConferences((data as Conference[]) || []);
     } catch (error) {
       console.error('Error fetching conferences:', error);
+    }
+  };
+
+  const fetchConferenceDetails = async (conferenceId: string) => {
+    try {
+      setConferenceDetailsLoading(true);
+      const [conferenceResult, sectionsResult, articlesResult] = await Promise.all([
+        supabase.from('conferences').select('*').eq('id', conferenceId).single(),
+        supabase
+          .from('conference_sections')
+          .select('*')
+          .eq('conference_id', conferenceId)
+          .order('sort_order', { ascending: true })
+          .order('created_at', { ascending: true }),
+        supabase
+          .from('articles')
+          .select(
+            `
+            id,
+            title,
+            status,
+            submitted_at,
+            profiles:author_id(full_name)
+          `,
+          )
+          .eq('conference_id', conferenceId)
+          .order('submitted_at', { ascending: false }),
+      ]);
+
+      if (conferenceResult.error) throw conferenceResult.error;
+      if (sectionsResult.error) throw sectionsResult.error;
+      if (articlesResult.error) throw articlesResult.error;
+
+      const normalizedConferenceArticles: ConferenceArticleSummary[] = ((articlesResult.data as Array<{
+        id: string;
+        title: string;
+        status: ArticleStatus;
+        submitted_at: string;
+        profiles?: { full_name?: string } | Array<{ full_name?: string }> | null;
+      }>) || []).map((article) => ({
+        id: article.id,
+        title: article.title,
+        status: article.status,
+        submitted_at: article.submitted_at,
+        profiles: Array.isArray(article.profiles)
+          ? article.profiles[0]
+            ? { full_name: article.profiles[0].full_name || '' }
+            : null
+          : article.profiles
+            ? { full_name: article.profiles.full_name || '' }
+            : null,
+      }));
+
+      setSelectedConference(conferenceResult.data as Conference);
+      setSelectedConferenceSections((sectionsResult.data as ConferenceSection[]) || []);
+      setSelectedConferenceArticles(normalizedConferenceArticles);
+    } catch (error) {
+      console.error('Error fetching conference details:', error);
+    } finally {
+      setConferenceDetailsLoading(false);
     }
   };
 
@@ -316,6 +502,77 @@ const OrganizerDashboard: React.FC<OrganizerDashboardProps> = ({ currentPage = '
       setReviewers(data || []);
     } catch (error) {
       console.error('Error fetching reviewers:', error);
+    }
+  };
+
+  const handleCreateConference = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!user) return;
+
+    const normalizedTitle = conferenceTitle.trim();
+    if (!normalizedTitle) {
+      setConferenceCreateExpanded(true);
+      setConferenceCreateError(t('organizerDashboard.conferenceValidationTitle'));
+      setConferenceCreateMessage('');
+      return;
+    }
+
+    if (conferenceStartDate && conferenceEndDate && conferenceEndDate < conferenceStartDate) {
+      setConferenceCreateExpanded(true);
+      setConferenceCreateError(t('organizerDashboard.conferenceValidationDateRange'));
+      setConferenceCreateMessage('');
+      return;
+    }
+
+    if (
+      conferenceSubmissionStartAt &&
+      conferenceSubmissionEndAt &&
+      new Date(conferenceSubmissionEndAt).getTime() < new Date(conferenceSubmissionStartAt).getTime()
+    ) {
+      setConferenceCreateExpanded(true);
+      setConferenceCreateError(t('organizerDashboard.conferenceValidationSubmissionWindow'));
+      setConferenceCreateMessage('');
+      return;
+    }
+
+    setCreatingConference(true);
+    setConferenceCreateError('');
+    try {
+      const { data, error } = await supabase
+        .from('conferences')
+        .insert([
+          {
+            title: normalizedTitle,
+            description: conferenceDescription.trim() || null,
+            thesis_requirements: conferenceThesisRequirements.trim() || null,
+            start_date: conferenceStartDate,
+            end_date: conferenceEndDate,
+            submission_start_at: fromInputDateTime(conferenceSubmissionStartAt),
+            submission_end_at: fromInputDateTime(conferenceSubmissionEndAt),
+            organizer_id: user.id,
+            status: conferenceStatus,
+            timezone: conferenceTimezone.trim() || 'Europe/Kyiv',
+            location: conferenceLocation.trim() || null,
+            is_public: conferenceIsPublic,
+          },
+        ])
+        .select('id, title, start_date, end_date, status, is_public')
+        .single();
+      if (error) throw error;
+
+      setConferenceCreateMessage(
+        t('organizerDashboard.conferenceCreateSuccess', { title: data.title }),
+      );
+      resetConferenceForm();
+      setConferenceCreateExpanded(false);
+      await fetchConferences();
+      setProceedingsConferenceId(data.id);
+    } catch (error) {
+      console.error('Error creating conference:', error);
+      setConferenceCreateExpanded(true);
+      setConferenceCreateError(t('organizerDashboard.conferenceCreateError'));
+    } finally {
+      setCreatingConference(false);
     }
   };
 
@@ -477,6 +734,18 @@ const OrganizerDashboard: React.FC<OrganizerDashboardProps> = ({ currentPage = '
     fetchArticleDetails(article.id);
   };
 
+  const handleOpenConference = (conference: Conference) => {
+    setSelectedConference(conference);
+    setSelectedConferenceSections([]);
+    setSelectedConferenceArticles([]);
+    fetchConferenceDetails(conference.id);
+  };
+
+  const handleOpenConferenceFromArticle = async () => {
+    if (!selectedArticle?.conference_id) return;
+    await fetchConferenceDetails(selectedArticle.conference_id);
+  };
+
   const searchConferenceArticles = useMemo(() => {
     const query = articleSearch.trim().toLowerCase();
     return articles.filter((article) => {
@@ -512,6 +781,23 @@ const OrganizerDashboard: React.FC<OrganizerDashboardProps> = ({ currentPage = '
       return matchesRecommendation && matchesConference && matchesQuery;
     });
   }, [reviews, reviewsSearch, recommendationFilter, conferenceFilter]);
+
+  const filteredConferences = useMemo(() => {
+    const query = conferenceSearch.trim().toLowerCase();
+    return conferences.filter((conference) => {
+      const matchesQuery =
+        !query ||
+        conference.title.toLowerCase().includes(query) ||
+        (conference.location || '').toLowerCase().includes(query);
+      const matchesStatus =
+        conferenceStatusFilter === 'all' || conference.status === conferenceStatusFilter;
+      const matchesVisibility =
+        conferenceVisibilityFilter === 'all' ||
+        (conferenceVisibilityFilter === 'public' && conference.is_public) ||
+        (conferenceVisibilityFilter === 'private' && !conference.is_public);
+      return matchesQuery && matchesStatus && matchesVisibility;
+    });
+  }, [conferences, conferenceSearch, conferenceStatusFilter, conferenceVisibilityFilter]);
 
   const sortedArticles = useMemo(() => {
     const items = [...filteredArticles];
@@ -567,8 +853,28 @@ const OrganizerDashboard: React.FC<OrganizerDashboardProps> = ({ currentPage = '
     }
   }, [filteredReviews, reviewsSort, locale]);
 
+  const sortedConferences = useMemo(() => {
+    const items = [...filteredConferences];
+    switch (conferenceSort) {
+      case 'start_asc':
+        return items.sort(
+          (a, b) => new Date(a.start_date).getTime() - new Date(b.start_date).getTime(),
+        );
+      case 'title_asc':
+        return items.sort((a, b) => a.title.localeCompare(b.title, locale, { sensitivity: 'base' }));
+      case 'title_desc':
+        return items.sort((a, b) => b.title.localeCompare(a.title, locale, { sensitivity: 'base' }));
+      case 'start_desc':
+      default:
+        return items.sort(
+          (a, b) => new Date(b.start_date).getTime() - new Date(a.start_date).getTime(),
+        );
+    }
+  }, [filteredConferences, conferenceSort, locale]);
+
   const pagedArticles = paginateItems(sortedArticles, articlePage, pageSize);
   const pagedReviews = paginateItems(sortedReviews, reviewsPage, pageSize);
+  const pagedConferences = paginateItems(sortedConferences, conferencePage, pageSize);
 
   useEffect(() => {
     if (pagedArticles.safePage !== articlePage) setArticlePage(pagedArticles.safePage);
@@ -577,6 +883,10 @@ const OrganizerDashboard: React.FC<OrganizerDashboardProps> = ({ currentPage = '
   useEffect(() => {
     if (pagedReviews.safePage !== reviewsPage) setReviewsPage(pagedReviews.safePage);
   }, [reviewsPage, pagedReviews.safePage]);
+
+  useEffect(() => {
+    if (pagedConferences.safePage !== conferencePage) setConferencePage(pagedConferences.safePage);
+  }, [conferencePage, pagedConferences.safePage]);
 
   const acceptedArticles = useMemo(
     () =>
@@ -1030,6 +1340,34 @@ const OrganizerDashboard: React.FC<OrganizerDashboardProps> = ({ currentPage = '
           </div>
 
           <div className="app-card-body app-page">
+            {selectedArticle.conference_id && (
+              <button
+                type="button"
+                onClick={() => {
+                  void handleOpenConferenceFromArticle();
+                }}
+                disabled={conferenceDetailsLoading}
+                className="w-full text-left border border-gray-200 rounded-lg p-3 hover:bg-gray-50 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-medium text-gray-700">
+                      {t('authorDashboard.conferenceInfoTitle')}
+                    </h3>
+                    <p className="text-sm text-gray-900 mt-1">
+                      {selectedArticle.conferences?.title ||
+                        conferences.find((conference) => conference.id === selectedArticle.conference_id)?.title ||
+                        t('common.noData')}
+                    </p>
+                  </div>
+                  <span className="inline-flex items-center gap-1 text-sm text-blue-700">
+                    <CalendarDays className="h-4 w-4" />
+                    {conferenceDetailsLoading ? t('auth.submitLoading') : t('authorDashboard.openConferenceDetails')}
+                  </span>
+                </div>
+              </button>
+            )}
+
             <div>
               <h3 className="text-lg font-medium text-gray-900 mb-2">{t('submitArticle.abstractLabel')}</h3>
               <p className="text-gray-700 leading-relaxed">{selectedArticle.abstract}</p>
@@ -1260,6 +1598,34 @@ const OrganizerDashboard: React.FC<OrganizerDashboardProps> = ({ currentPage = '
             </p>
           </div>
 
+          {selectedArticle.conference_id && (
+            <button
+              type="button"
+              onClick={() => {
+                void handleOpenConferenceFromArticle();
+              }}
+              disabled={conferenceDetailsLoading}
+              className="w-full text-left border border-gray-200 rounded-lg p-3 hover:bg-gray-50 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-medium text-gray-700">
+                    {t('authorDashboard.conferenceInfoTitle')}
+                  </h3>
+                  <p className="text-sm text-gray-900 mt-1">
+                    {selectedArticle.conferences?.title ||
+                      conferences.find((conference) => conference.id === selectedArticle.conference_id)?.title ||
+                      t('common.noData')}
+                  </p>
+                </div>
+                <span className="inline-flex items-center gap-1 text-sm text-blue-700">
+                  <CalendarDays className="h-4 w-4" />
+                  {conferenceDetailsLoading ? t('auth.submitLoading') : t('authorDashboard.openConferenceDetails')}
+                </span>
+              </div>
+            </button>
+          )}
+
           <p className="text-gray-700 leading-relaxed">{selectedArticle.abstract}</p>
 
           {selectedArticle.file_url && (
@@ -1419,6 +1785,445 @@ const OrganizerDashboard: React.FC<OrganizerDashboardProps> = ({ currentPage = '
       {renderArticlesList(true)}
     </div>
   );
+
+  const renderConferenceCreateCard = () => (
+    <div className="app-card">
+      <button
+        type="button"
+        onClick={() => setConferenceCreateExpanded((prev) => !prev)}
+        className="w-full app-card-header flex items-start justify-between gap-3 text-left"
+      >
+        <div>
+          <h2 className="text-base font-semibold text-gray-900">
+            {t('organizerDashboard.conferenceCreateTitle')}
+          </h2>
+          <p className="text-sm text-gray-600 mt-1">
+            {t('organizerDashboard.conferenceCreateDescription')}
+          </p>
+        </div>
+        <ChevronDown
+          className={`h-5 w-5 text-gray-500 mt-1 transition-transform duration-200 ${
+            conferenceCreateExpanded ? 'rotate-180' : 'rotate-0'
+          }`}
+        />
+      </button>
+
+      <div
+        className={`grid transition-[grid-template-rows] duration-300 ease-in-out ${
+          conferenceCreateExpanded ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'
+        }`}
+      >
+        <div className="overflow-hidden">
+          <div
+            className={`app-card-body space-y-3 transition-opacity duration-200 ${
+              conferenceCreateExpanded ? 'opacity-100' : 'opacity-0'
+            }`}
+            aria-hidden={!conferenceCreateExpanded}
+          >
+            <form onSubmit={handleCreateConference} className="space-y-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="md:col-span-2">
+                  <label className="app-label">{t('organizerDashboard.conferenceTitleLabel')}</label>
+                  <input
+                    value={conferenceTitle}
+                    onChange={(event) => setConferenceTitle(event.target.value)}
+                    placeholder={t('organizerDashboard.conferenceTitlePlaceholder')}
+                    className="app-input"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="app-label">{t('organizerDashboard.conferenceStartDateLabel')}</label>
+                  <input
+                    type="date"
+                    value={conferenceStartDate}
+                    onChange={(event) => setConferenceStartDate(event.target.value)}
+                    className="app-input"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="app-label">{t('organizerDashboard.conferenceEndDateLabel')}</label>
+                  <input
+                    type="date"
+                    value={conferenceEndDate}
+                    onChange={(event) => setConferenceEndDate(event.target.value)}
+                    className="app-input"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="app-label">{t('organizerDashboard.conferenceSubmissionStartLabel')}</label>
+                  <input
+                    type="datetime-local"
+                    value={conferenceSubmissionStartAt}
+                    onChange={(event) => setConferenceSubmissionStartAt(event.target.value)}
+                    className="app-input"
+                  />
+                </div>
+                <div>
+                  <label className="app-label">{t('organizerDashboard.conferenceSubmissionEndLabel')}</label>
+                  <input
+                    type="datetime-local"
+                    value={conferenceSubmissionEndAt}
+                    onChange={(event) => setConferenceSubmissionEndAt(event.target.value)}
+                    className="app-input"
+                  />
+                </div>
+                <div>
+                  <label className="app-label">{t('organizerDashboard.conferenceTimezoneLabel')}</label>
+                  <input
+                    value={conferenceTimezone}
+                    onChange={(event) => setConferenceTimezone(event.target.value)}
+                    className="app-input"
+                  />
+                </div>
+                <div>
+                  <label className="app-label">{t('organizerDashboard.conferenceStatusLabel')}</label>
+                  <select
+                    value={conferenceStatus}
+                    onChange={(event) => setConferenceStatus(event.target.value as ConferenceStatus)}
+                    className="app-input"
+                  >
+                    {CONFERENCE_STATUS_OPTIONS.map((status) => (
+                      <option key={status} value={status}>
+                        {getConferenceStatusLabel(status)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="md:col-span-2">
+                  <label className="app-label">{t('organizerDashboard.conferenceLocationLabel')}</label>
+                  <input
+                    value={conferenceLocation}
+                    onChange={(event) => setConferenceLocation(event.target.value)}
+                    placeholder={t('organizerDashboard.conferenceLocationPlaceholder')}
+                    className="app-input"
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="app-label">{t('organizerDashboard.conferenceDescriptionLabel')}</label>
+                  <textarea
+                    value={conferenceDescription}
+                    onChange={(event) => setConferenceDescription(event.target.value)}
+                    rows={3}
+                    className="app-input"
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="app-label">{t('organizerDashboard.conferenceThesisRequirementsLabel')}</label>
+                  <textarea
+                    value={conferenceThesisRequirements}
+                    onChange={(event) => setConferenceThesisRequirements(event.target.value)}
+                    rows={3}
+                    className="app-input"
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="inline-flex items-center gap-2 text-sm text-gray-700">
+                    <input
+                      type="checkbox"
+                      checked={conferenceIsPublic}
+                      onChange={(event) => setConferenceIsPublic(event.target.checked)}
+                    />
+                    <span>{t('organizerDashboard.conferencePublicLabel')}</span>
+                  </label>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button type="submit" disabled={creatingConference} className="app-btn-primary">
+                  {creatingConference
+                    ? t('organizerDashboard.conferenceCreating')
+                    : t('organizerDashboard.conferenceCreateButton')}
+                </button>
+                <button type="button" onClick={resetConferenceForm} className="app-btn-ghost">
+                  {t('organizerDashboard.conferenceResetButton')}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+
+      {(conferenceCreateMessage || conferenceCreateError) && (
+        <div className="px-4 pb-4">
+          {conferenceCreateMessage && <p className="text-sm text-green-600">{conferenceCreateMessage}</p>}
+          {conferenceCreateError && <p className="text-sm text-red-600">{conferenceCreateError}</p>}
+        </div>
+      )}
+    </div>
+  );
+
+  const renderConferencesPage = () => (
+    <div className="app-page">
+      <h1 className="app-page-title">{t('layout.nav.conferences')}</h1>
+      {renderConferenceCreateCard()}
+
+      <div className="app-card p-4">
+        <div className="dashboard-search-grid dashboard-search-grid-4">
+          <div className="dashboard-search-field">
+            <Search className="dashboard-search-icon" />
+            <input
+              value={conferenceSearch}
+              onChange={(event) => setConferenceSearch(event.target.value)}
+              placeholder={t('common.searchPlaceholder')}
+              className="dashboard-search-input"
+            />
+          </div>
+          <select
+            value={conferenceStatusFilter}
+            onChange={(event) => setConferenceStatusFilter(event.target.value as 'all' | ConferenceStatus)}
+            className="app-input"
+          >
+            <option value="all">{t('common.allStatuses')}</option>
+            {CONFERENCE_STATUS_OPTIONS.map((status) => (
+              <option key={status} value={status}>
+                {getConferenceStatusLabel(status)}
+              </option>
+            ))}
+          </select>
+          <select
+            value={conferenceVisibilityFilter}
+            onChange={(event) =>
+              setConferenceVisibilityFilter(event.target.value as 'all' | 'public' | 'private')
+            }
+            className="app-input"
+          >
+            <option value="all">{t('common.allConferences')}</option>
+            <option value="public">{t('organizerDashboard.conferenceVisibilityPublic')}</option>
+            <option value="private">{t('organizerDashboard.conferenceVisibilityPrivate')}</option>
+          </select>
+          <select
+            value={conferenceSort}
+            onChange={(event) => setConferenceSort(event.target.value as ConferenceSortOption)}
+            className="app-input"
+          >
+            <option value="start_desc">{t('common.newestFirst')}</option>
+            <option value="start_asc">{t('common.oldestFirst')}</option>
+            <option value="title_asc">{t('common.titleAZ')}</option>
+            <option value="title_desc">{t('common.titleZA')}</option>
+          </select>
+        </div>
+      </div>
+
+      <div className="app-card">
+        <div className="app-card-header flex items-center justify-between gap-3">
+          <h2 className="text-lg font-medium text-gray-900">{t('organizerDashboard.conferenceListTitle')}</h2>
+          <span className="text-xs text-gray-500">{filteredConferences.length}</span>
+        </div>
+        {filteredConferences.length === 0 ? (
+          <div className="app-empty-state">
+            <FileText className="app-empty-icon" />
+            <h3 className="app-empty-title">{t('organizerDashboard.conferenceListEmpty')}</h3>
+          </div>
+        ) : (
+          <>
+            <div className="app-list-divider">
+              {pagedConferences.pageItems.map((conference) => (
+                <div
+                  key={conference.id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => handleOpenConference(conference)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      handleOpenConference(conference);
+                    }
+                  }}
+                  className="app-list-item cursor-pointer hover:bg-gray-50 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-gray-900">{conference.title}</p>
+                      <p className="text-xs text-gray-600 mt-1">
+                        {formatDate(conference.start_date)} - {formatDate(conference.end_date)}
+                      </p>
+                      {conference.location && (
+                        <p className="text-xs text-gray-500 mt-1">{conference.location}</p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span
+                        className={`app-pill ${
+                          conference.is_public
+                            ? 'bg-green-100 text-green-700'
+                            : 'bg-gray-100 text-gray-700'
+                        }`}
+                      >
+                        {conference.is_public
+                          ? t('organizerDashboard.conferenceVisibilityPublic')
+                          : t('organizerDashboard.conferenceVisibilityPrivate')}
+                      </span>
+                      <span className={`app-pill ${getConferenceStatusColor(conference.status)}`}>
+                        {getConferenceStatusLabel(conference.status)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            {renderPagination(conferencePage, pagedConferences.totalPages, setConferencePage)}
+          </>
+        )}
+      </div>
+    </div>
+  );
+
+  const renderConferenceDetails = () => {
+    if (!selectedConference) return null;
+
+    return (
+      <div className="app-page">
+        <div className="flex items-center justify-between">
+          <h1 className="app-page-title">{t('organizerDashboard.conferenceDetailsTitle')}</h1>
+          <button type="button" onClick={() => setSelectedConference(null)} className="app-btn-ghost">
+            {selectedArticle ? t('authorDashboard.backToArticleDetails') : t('organizerDashboard.backToConferences')}
+          </button>
+        </div>
+
+        <div className="app-card">
+          <div className="app-card-header flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900">{selectedConference.title}</h2>
+              <p className="text-sm text-gray-600 mt-1">
+                {formatDate(selectedConference.start_date)} - {formatDate(selectedConference.end_date)}
+              </p>
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <span
+                className={`app-pill ${
+                  selectedConference.is_public ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'
+                }`}
+              >
+                {selectedConference.is_public
+                  ? t('organizerDashboard.conferenceVisibilityPublic')
+                  : t('organizerDashboard.conferenceVisibilityPrivate')}
+              </span>
+              <span className={`app-pill ${getConferenceStatusColor(selectedConference.status)}`}>
+                {getConferenceStatusLabel(selectedConference.status)}
+              </span>
+            </div>
+          </div>
+          <div className="app-card-body app-page">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <p className="text-xs uppercase tracking-wide text-gray-500">
+                  {t('organizerDashboard.conferenceTimezoneLabel')}
+                </p>
+                <p className="text-sm text-gray-900">{selectedConference.timezone || t('common.noData')}</p>
+              </div>
+              <div>
+                <p className="text-xs uppercase tracking-wide text-gray-500">
+                  {t('organizerDashboard.conferenceLocationLabel')}
+                </p>
+                <p className="text-sm text-gray-900">{selectedConference.location || t('common.noData')}</p>
+              </div>
+              <div>
+                <p className="text-xs uppercase tracking-wide text-gray-500">
+                  {t('organizerDashboard.conferenceSubmissionStartLabel')}
+                </p>
+                <p className="text-sm text-gray-900">
+                  {selectedConference.submission_start_at
+                    ? formatDateTime(selectedConference.submission_start_at)
+                    : t('common.noData')}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs uppercase tracking-wide text-gray-500">
+                  {t('organizerDashboard.conferenceSubmissionEndLabel')}
+                </p>
+                <p className="text-sm text-gray-900">
+                  {selectedConference.submission_end_at
+                    ? formatDateTime(selectedConference.submission_end_at)
+                    : t('common.noData')}
+                </p>
+              </div>
+            </div>
+
+            {selectedConference.description && (
+              <div>
+                <h3 className="text-sm font-semibold text-gray-900">
+                  {t('organizerDashboard.conferenceDescriptionLabel')}
+                </h3>
+                <p className="text-sm text-gray-700 mt-1">{selectedConference.description}</p>
+              </div>
+            )}
+
+            {selectedConference.thesis_requirements && (
+              <div>
+                <h3 className="text-sm font-semibold text-gray-900">
+                  {t('organizerDashboard.conferenceThesisRequirementsLabel')}
+                </h3>
+                <p className="text-sm text-gray-700 mt-1">{selectedConference.thesis_requirements}</p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+          <div className="app-card">
+            <div className="app-card-header">
+              <h3 className="text-lg font-medium text-gray-900">{t('organizerDashboard.conferenceSectionsTitle')}</h3>
+            </div>
+            {conferenceDetailsLoading ? (
+              <p className="app-list-item text-sm text-gray-500">{t('auth.submitLoading')}</p>
+            ) : selectedConferenceSections.length === 0 ? (
+              <p className="app-list-item text-sm text-gray-500">
+                {t('organizerDashboard.conferenceSectionsEmpty')}
+              </p>
+            ) : (
+              <div className="app-list-divider">
+                {selectedConferenceSections.map((section) => (
+                  <div key={section.id} className="app-list-item">
+                    <p className="text-sm font-medium text-gray-900">
+                      {section.code ? `${section.code} - ` : ''}
+                      {section.name}
+                    </p>
+                    {section.description && <p className="text-xs text-gray-600 mt-1">{section.description}</p>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="app-card">
+            <div className="app-card-header">
+              <h3 className="text-lg font-medium text-gray-900">
+                {t('organizerDashboard.conferenceArticlesTitle', {
+                  count: selectedConferenceArticles.length,
+                })}
+              </h3>
+            </div>
+            {conferenceDetailsLoading ? (
+              <p className="app-list-item text-sm text-gray-500">{t('auth.submitLoading')}</p>
+            ) : selectedConferenceArticles.length === 0 ? (
+              <p className="app-list-item text-sm text-gray-500">
+                {t('organizerDashboard.conferenceArticlesEmpty')}
+              </p>
+            ) : (
+              <div className="app-list-divider">
+                {selectedConferenceArticles.map((article) => (
+                  <div key={article.id} className="app-list-item">
+                    <p className="text-sm font-medium text-gray-900">{article.title}</p>
+                    <p className="text-xs text-gray-600 mt-1">
+                      {t('common.by', { name: article.profiles?.full_name ?? t('common.noData') })}
+                      {' - '}
+                      {formatDate(article.submitted_at)}
+                    </p>
+                    <span className={`app-pill mt-2 ${getStatusColor(article.status)}`}>
+                      {getStatusLabel(article.status)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   const renderDashboardPage = () => (
     <div className="app-page">
@@ -1637,7 +2442,9 @@ const OrganizerDashboard: React.FC<OrganizerDashboardProps> = ({ currentPage = '
   }
 
   if (selectedArticle && currentPage === 'manage') return renderManageDetails();
+  if (selectedConference) return renderConferenceDetails();
   if (selectedArticle) return renderArticleDetails();
+  if (currentPage === 'conferences') return renderConferencesPage();
   if (currentPage === 'reviews') return renderReviewsPage();
   if (currentPage === 'manage') return renderManagePage();
   return renderDashboardPage();

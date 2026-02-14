@@ -1,5 +1,5 @@
 import React from 'react';
-import { User, FileText, Users, Bell, LogOut, Settings } from 'lucide-react';
+import { User, FileText, Users, Bell, LogOut, Settings, CalendarDays } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -13,10 +13,12 @@ const Layout: React.FC<LayoutProps> = ({ children, currentPage, onPageChange }) 
   const { t } = useTranslation();
   const { profile, signOut } = useAuth();
 
-  const getNavItems = () => {
-    if (!profile) return [];
+  type NavItem = { id: string; icon: React.ComponentType<{ className?: string }>; labelKey: string };
 
-    const commonItems = [
+  const getNavItems = () => {
+    if (!profile) return [] as NavItem[];
+
+    const commonItems: NavItem[] = [
       { id: 'profile', labelKey: 'layout.nav.profile', icon: User },
       { id: 'notifications', labelKey: 'layout.nav.notifications', icon: Bell },
     ];
@@ -37,6 +39,7 @@ const Layout: React.FC<LayoutProps> = ({ children, currentPage, onPageChange }) 
       case 'organizer':
         return [
           { id: 'dashboard', labelKey: 'layout.nav.allArticles', icon: FileText },
+          { id: 'conferences', labelKey: 'layout.nav.conferences', icon: CalendarDays },
           { id: 'reviews', labelKey: 'layout.nav.allReviews', icon: Users },
           { id: 'manage', labelKey: 'layout.nav.manageStatus', icon: Settings },
           { id: 'roles', labelKey: 'layout.nav.roles', icon: User },
