@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
-import { Profile, UserRole } from '../types/database.types';
+import { Profile } from '../types/database.types';
 
 interface AuthContextType {
   user: User | null;
@@ -12,7 +12,6 @@ interface AuthContextType {
     email: string,
     password: string,
     fullName: string,
-    role: UserRole,
     institution?: string,
   ) => Promise<void>;
   signOut: () => Promise<void>;
@@ -90,7 +89,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     email: string,
     password: string,
     fullName: string,
-    role: UserRole,
     institution?: string,
   ) => {
     const { data, error } = await supabase.auth.signUp({
@@ -108,7 +106,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             id: data.user.id,
             email,
             full_name: fullName,
-            role,
+            role: 'author',
             institution,
           },
         ]);

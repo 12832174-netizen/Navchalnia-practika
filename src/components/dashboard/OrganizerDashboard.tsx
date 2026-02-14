@@ -17,23 +17,47 @@ import {
   ArticleReviewAssignment,
   ArticleStatus,
   ArticleStatusHistory,
+  Conference,
   Profile,
   Review,
 } from '../../types/database.types';
 import { useAuth } from '../../contexts/AuthContext';
 import { downloadCsv } from '../../utils/csv';
-import { DEFAULT_PAGE_SIZE, paginateItems } from '../../utils/pagination';
+import { paginateItems } from '../../utils/pagination';
+import { getStoragePathFromFileUrl } from '../../utils/articleFiles';
+import {
+  formatDateByPreferences,
+  formatDateTimeByPreferences,
+  getStoredListSortOption,
+  getStoredPageSize,
+  setListSortPreference,
+} from '../../utils/preferences';
 
 interface OrganizerDashboardProps {
   currentPage?: 'dashboard' | 'reviews' | 'manage';
 }
 
+const ARTICLE_SORT_OPTIONS = ['date_desc', 'date_asc', 'title_asc', 'title_desc'] as const;
+type ArticleSortOption = (typeof ARTICLE_SORT_OPTIONS)[number];
+
+const REVIEW_SORT_OPTIONS = [
+  'date_desc',
+  'date_asc',
+  'title_asc',
+  'title_desc',
+  'rating_desc',
+  'rating_asc',
+] as const;
+type ReviewSortOption = (typeof REVIEW_SORT_OPTIONS)[number];
+
 const OrganizerDashboard: React.FC<OrganizerDashboardProps> = ({ currentPage = 'dashboard' }) => {
   const { t, i18n } = useTranslation();
+  const locale = i18n.resolvedLanguage || i18n.language || 'en';
   const { user } = useAuth();
 
   const [articles, setArticles] = useState<Article[]>([]);
   const [reviews, setReviews] = useState<Review[]>([]);
+  const [conferences, setConferences] = useState<Conference[]>([]);
   const [reviewers, setReviewers] = useState<Profile[]>([]);
   const [assignments, setAssignments] = useState<ArticleReviewAssignment[]>([]);
   const [selectedArticle, setSelectedArticle] = useState<Article | null>(null);
@@ -50,10 +74,17 @@ const OrganizerDashboard: React.FC<OrganizerDashboardProps> = ({ currentPage = '
 
   const [articleSearch, setArticleSearch] = useState('');
   const [articleStatusFilter, setArticleStatusFilter] = useState<'all' | ArticleStatus>('all');
+  const [conferenceFilter, setConferenceFilter] = useState<string>('all');
   const [reviewsSearch, setReviewsSearch] = useState('');
   const [recommendationFilter, setRecommendationFilter] = useState<
     'all' | 'accept' | 'accept_with_comments' | 'reject'
   >('all');
+  const [articleSort, setArticleSort] = useState<ArticleSortOption>(() =>
+    getStoredListSortOption('organizer.articles', ARTICLE_SORT_OPTIONS, 'date_desc'),
+  );
+  const [reviewsSort, setReviewsSort] = useState<ReviewSortOption>(() =>
+    getStoredListSortOption('organizer.reviews', REVIEW_SORT_OPTIONS, 'date_desc'),
+  );
   const [articlePage, setArticlePage] = useState(1);
   const [reviewsPage, setReviewsPage] = useState(1);
 
@@ -61,13 +92,24 @@ const OrganizerDashboard: React.FC<OrganizerDashboardProps> = ({ currentPage = '
   const [updating, setUpdating] = useState(false);
   const [assigning, setAssigning] = useState(false);
   const [savingSchedule, setSavingSchedule] = useState(false);
+  const [proceedingsMode, setProceedingsMode] = useState<'conference' | 'all' | 'date' | 'manual'>(
+    'conference',
+  );
+  const [proceedingsConferenceId, setProceedingsConferenceId] = useState('');
+  const [proceedingsFromDate, setProceedingsFromDate] = useState('');
+  const [proceedingsToDate, setProceedingsToDate] = useState('');
+  const [proceedingsDateIncludeAllStatuses, setProceedingsDateIncludeAllStatuses] = useState(false);
+  const [selectedProceedingsIds, setSelectedProceedingsIds] = useState<string[]>([]);
+  const [generatingProceedings, setGeneratingProceedings] = useState(false);
+  const [proceedingsMessage, setProceedingsMessage] = useState('');
+  const [proceedingsError, setProceedingsError] = useState('');
 
   const [articleFileUrl, setArticleFileUrl] = useState<string | null>(null);
   const [articleFileLoading, setArticleFileLoading] = useState(false);
 
-  const pageSize = DEFAULT_PAGE_SIZE;
-  const formatDate = (date: string) => new Date(date).toLocaleDateString(i18n.resolvedLanguage);
-  const formatDateTime = (date: string) => new Date(date).toLocaleString(i18n.resolvedLanguage);
+  const pageSize = getStoredPageSize();
+  const formatDate = (date: string) => formatDateByPreferences(date, locale);
+  const formatDateTime = (date: string) => formatDateTimeByPreferences(date, locale);
   const getStatusLabel = (status: string) => t(`articleStatus.${status}`);
   const getRecommendationLabel = (recommendation: string) => t(`recommendation.${recommendation}`);
 
@@ -83,26 +125,6 @@ const OrganizerDashboard: React.FC<OrganizerDashboardProps> = ({ currentPage = '
   };
 
   const fromInputDateTime = (value: string) => (value ? new Date(value).toISOString() : null);
-
-  const getStoragePathFromFileUrl = (fileUrl: string): string | null => {
-    if (!fileUrl) return null;
-    if (!fileUrl.startsWith('http://') && !fileUrl.startsWith('https://')) return fileUrl;
-
-    try {
-      const parsed = new URL(fileUrl);
-      const markers = [
-        '/storage/v1/object/public/articles/',
-        '/storage/v1/object/sign/articles/',
-        '/storage/v1/object/authenticated/articles/',
-      ];
-      const marker = markers.find((item) => parsed.pathname.includes(item));
-      if (!marker) return null;
-      const pathIndex = parsed.pathname.indexOf(marker) + marker.length;
-      return decodeURIComponent(parsed.pathname.slice(pathIndex));
-    } catch {
-      return null;
-    }
-  };
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -142,6 +164,7 @@ const OrganizerDashboard: React.FC<OrganizerDashboardProps> = ({ currentPage = '
     fetchAllArticles();
     fetchAllReviews();
     fetchReviewers();
+    fetchConferences();
   }, []);
 
   useEffect(() => {
@@ -160,11 +183,31 @@ const OrganizerDashboard: React.FC<OrganizerDashboardProps> = ({ currentPage = '
 
   useEffect(() => {
     setArticlePage(1);
-  }, [articleSearch, articleStatusFilter]);
+  }, [articleSearch, articleStatusFilter, conferenceFilter, articleSort]);
 
   useEffect(() => {
     setReviewsPage(1);
-  }, [reviewsSearch, recommendationFilter]);
+  }, [reviewsSearch, recommendationFilter, conferenceFilter, reviewsSort]);
+
+  useEffect(() => {
+    setListSortPreference('organizer.articles', articleSort);
+  }, [articleSort]);
+
+  useEffect(() => {
+    setListSortPreference('organizer.reviews', reviewsSort);
+  }, [reviewsSort]);
+
+  useEffect(() => {
+    if (!proceedingsConferenceId && conferences.length > 0) {
+      setProceedingsConferenceId(conferences[0].id);
+    }
+  }, [conferences, proceedingsConferenceId]);
+
+  useEffect(() => {
+    if (!proceedingsMessage) return;
+    const timeoutId = window.setTimeout(() => setProceedingsMessage(''), 5000);
+    return () => window.clearTimeout(timeoutId);
+  }, [proceedingsMessage]);
 
   useEffect(() => {
     if (!selectedArticle) return;
@@ -214,7 +257,8 @@ const OrganizerDashboard: React.FC<OrganizerDashboardProps> = ({ currentPage = '
         .from('articles')
         .select(`
           *,
-          profiles!articles_author_id_fkey(full_name, institution)
+          profiles!articles_author_id_fkey(full_name, institution),
+          conferences:conference_id(id, title)
         `)
         .order('submitted_at', { ascending: false });
       if (error) throw error;
@@ -230,7 +274,11 @@ const OrganizerDashboard: React.FC<OrganizerDashboardProps> = ({ currentPage = '
         .from('reviews')
         .select(`
           *,
-          articles!inner(title),
+          articles!inner(
+            title,
+            conference_id,
+            conferences:conference_id(id, title)
+          ),
           profiles!reviews_reviewer_id_fkey(full_name)
         `)
         .eq('status', 'submitted')
@@ -241,6 +289,19 @@ const OrganizerDashboard: React.FC<OrganizerDashboardProps> = ({ currentPage = '
       console.error('Error fetching reviews:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchConferences = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('conferences')
+        .select('id, title, start_date, end_date, status, is_public')
+        .order('start_date', { ascending: false });
+      if (error) throw error;
+      setConferences((data as Conference[]) || []);
+    } catch (error) {
+      console.error('Error fetching conferences:', error);
     }
   };
 
@@ -408,34 +469,106 @@ const OrganizerDashboard: React.FC<OrganizerDashboardProps> = ({ currentPage = '
     }
   };
 
-  const filteredArticles = useMemo(() => {
+  const handleOpenArticle = (article: Article) => {
+    setSelectedArticle(article);
+    setArticleReviews([]);
+    setStatusHistory([]);
+    setAssignments([]);
+    fetchArticleDetails(article.id);
+  };
+
+  const searchConferenceArticles = useMemo(() => {
     const query = articleSearch.trim().toLowerCase();
     return articles.filter((article) => {
-      const matchesStatus = articleStatusFilter === 'all' || article.status === articleStatusFilter;
+      const matchesConference = conferenceFilter === 'all' || article.conference_id === conferenceFilter;
       const matchesQuery =
         !query ||
         article.title.toLowerCase().includes(query) ||
         article.abstract.toLowerCase().includes(query) ||
-        (article.profiles?.full_name || '').toLowerCase().includes(query);
-      return matchesStatus && matchesQuery;
+        (article.profiles?.full_name || '').toLowerCase().includes(query) ||
+        (article.conferences?.title || '').toLowerCase().includes(query);
+      return matchesConference && matchesQuery;
     });
-  }, [articles, articleSearch, articleStatusFilter]);
+  }, [articles, articleSearch, conferenceFilter]);
+
+  const filteredArticles = useMemo(() => {
+    return searchConferenceArticles.filter((article) => {
+      const matchesStatus = articleStatusFilter === 'all' || article.status === articleStatusFilter;
+      return matchesStatus;
+    });
+  }, [searchConferenceArticles, articleStatusFilter]);
 
   const filteredReviews = useMemo(() => {
     const query = reviewsSearch.trim().toLowerCase();
     return reviews.filter((review) => {
       const matchesRecommendation = recommendationFilter === 'all' || review.recommendation === recommendationFilter;
+      const matchesConference =
+        conferenceFilter === 'all' || review.articles?.conference_id === conferenceFilter;
       const matchesQuery =
         !query ||
         (review.articles?.title || '').toLowerCase().includes(query) ||
         (review.profiles?.full_name || '').toLowerCase().includes(query) ||
         review.content.toLowerCase().includes(query);
-      return matchesRecommendation && matchesQuery;
+      return matchesRecommendation && matchesConference && matchesQuery;
     });
-  }, [reviews, reviewsSearch, recommendationFilter]);
+  }, [reviews, reviewsSearch, recommendationFilter, conferenceFilter]);
 
-  const pagedArticles = paginateItems(filteredArticles, articlePage, pageSize);
-  const pagedReviews = paginateItems(filteredReviews, reviewsPage, pageSize);
+  const sortedArticles = useMemo(() => {
+    const items = [...filteredArticles];
+    switch (articleSort) {
+      case 'date_asc':
+        return items.sort(
+          (a, b) => new Date(a.submitted_at).getTime() - new Date(b.submitted_at).getTime(),
+        );
+      case 'title_asc':
+        return items.sort((a, b) => a.title.localeCompare(b.title, locale, { sensitivity: 'base' }));
+      case 'title_desc':
+        return items.sort((a, b) => b.title.localeCompare(a.title, locale, { sensitivity: 'base' }));
+      case 'date_desc':
+      default:
+        return items.sort(
+          (a, b) => new Date(b.submitted_at).getTime() - new Date(a.submitted_at).getTime(),
+        );
+    }
+  }, [filteredArticles, articleSort, locale]);
+
+  const sortedReviews = useMemo(() => {
+    const items = [...filteredReviews];
+    switch (reviewsSort) {
+      case 'date_asc':
+        return items.sort(
+          (a, b) =>
+            new Date(a.submitted_at || a.created_at).getTime() -
+            new Date(b.submitted_at || b.created_at).getTime(),
+        );
+      case 'title_asc':
+        return items.sort((a, b) =>
+          (a.articles?.title || '').localeCompare(b.articles?.title || '', locale, {
+            sensitivity: 'base',
+          }),
+        );
+      case 'title_desc':
+        return items.sort((a, b) =>
+          (b.articles?.title || '').localeCompare(a.articles?.title || '', locale, {
+            sensitivity: 'base',
+          }),
+        );
+      case 'rating_asc':
+        return items.sort((a, b) => a.rating - b.rating);
+      case 'rating_desc':
+        return items.sort((a, b) => b.rating - a.rating);
+      case 'date_desc':
+      default:
+        return items.sort(
+          (a, b) =>
+            new Date(b.submitted_at || b.created_at).getTime() -
+            new Date(a.submitted_at || a.created_at).getTime(),
+        );
+    }
+  }, [filteredReviews, reviewsSort, locale]);
+
+  const pagedArticles = paginateItems(sortedArticles, articlePage, pageSize);
+  const pagedReviews = paginateItems(sortedReviews, reviewsPage, pageSize);
 
   useEffect(() => {
     if (pagedArticles.safePage !== articlePage) setArticlePage(pagedArticles.safePage);
@@ -445,25 +578,268 @@ const OrganizerDashboard: React.FC<OrganizerDashboardProps> = ({ currentPage = '
     if (pagedReviews.safePage !== reviewsPage) setReviewsPage(pagedReviews.safePage);
   }, [reviewsPage, pagedReviews.safePage]);
 
+  const acceptedArticles = useMemo(
+    () =>
+      articles.filter(
+        (article) => article.status === 'accepted' || article.status === 'accepted_with_comments',
+      ),
+    [articles],
+  );
+
+  const proceedingsPoolCount = useMemo(() => {
+    if (proceedingsMode === 'conference') {
+      if (!proceedingsConferenceId) return 0;
+      return acceptedArticles.filter((article) => article.conference_id === proceedingsConferenceId).length;
+    }
+    if (proceedingsMode === 'date') {
+      const source = proceedingsDateIncludeAllStatuses ? articles : acceptedArticles;
+      const fromDate = proceedingsFromDate
+        ? new Date(`${proceedingsFromDate}T00:00:00`).getTime()
+        : null;
+      const toDate = proceedingsToDate ? new Date(`${proceedingsToDate}T23:59:59.999`).getTime() : null;
+      return source.filter((article) => {
+        const submittedAt = new Date(article.submitted_at).getTime();
+        if (fromDate !== null && submittedAt < fromDate) return false;
+        if (toDate !== null && submittedAt > toDate) return false;
+        return true;
+      }).length;
+    }
+    if (proceedingsMode === 'manual') {
+      return articles.length;
+    }
+    return acceptedArticles.length;
+  }, [
+    proceedingsMode,
+    proceedingsConferenceId,
+    proceedingsDateIncludeAllStatuses,
+    proceedingsFromDate,
+    proceedingsToDate,
+    articles,
+    acceptedArticles,
+  ]);
+
+  useEffect(() => {
+    setSelectedProceedingsIds((prev) =>
+      prev.filter((id) => articles.some((article) => article.id === id)),
+    );
+  }, [articles]);
+
   const exportArticles = (mode: 'accepted' | 'rejected' | 'all') => {
     const source =
-      mode === 'all' ? filteredArticles : filteredArticles.filter((article) => article.status === mode);
+      mode === 'all'
+        ? filteredArticles
+        : searchConferenceArticles.filter((article) =>
+            mode === 'accepted'
+              ? article.status === 'accepted' || article.status === 'accepted_with_comments'
+              : article.status === 'rejected',
+          );
     const filename =
       mode === 'accepted' ? 'articles_accepted.csv' : mode === 'rejected' ? 'articles_rejected.csv' : 'articles.csv';
 
     downloadCsv(
       filename,
-      ['Title', 'Author', 'Status', 'SubmittedAt', 'ReviewDueAt', 'PresentationStartsAt', 'PresentationLocation'],
+      [
+        'Id',
+        'Title',
+        'Author',
+        'Institution',
+        'Conference',
+        'ConferenceId',
+        'SectionId',
+        'Language',
+        'StatusCode',
+        'StatusLabel',
+        'SubmittedAt',
+        'ReviewDueAt',
+        'PresentationStartsAt',
+        'PresentationLocation',
+        'FileName',
+      ],
       source.map((article) => [
+        article.id,
         article.title,
         article.profiles?.full_name || '',
+        article.profiles?.institution || '',
+        article.conferences?.title || '',
+        article.conference_id || '',
+        article.section_id || '',
+        article.language || '',
+        article.status,
         getStatusLabel(article.status),
         formatDateTime(article.submitted_at),
         article.review_due_at ? formatDateTime(article.review_due_at) : '',
         article.presentation_starts_at ? formatDateTime(article.presentation_starts_at) : '',
         article.presentation_location || '',
+        article.file_name || '',
       ]),
     );
+  };
+
+  const downloadBlob = (filename: string, blob: Blob) => {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const escapeHtml = (value: string) =>
+    value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+
+  const toFilenameSegment = (value: string, fallback: string) => {
+    const cleaned = value
+      .trim()
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}]+/gu, '_')
+      .replace(/^_+|_+$/g, '');
+    return (cleaned || fallback).slice(0, 60);
+  };
+
+  const getProceedingsFilename = (selectedCount: number) => {
+    const dateSuffix = new Date().toISOString().slice(0, 10);
+
+    if (proceedingsMode === 'conference') {
+      const conferenceTitle =
+        conferences.find((conference) => conference.id === proceedingsConferenceId)?.title || '';
+      const conferencePart = toFilenameSegment(conferenceTitle, 'conference');
+      return `proceedings_conference_${conferencePart}_${dateSuffix}.doc`;
+    }
+
+    if (proceedingsMode === 'date') {
+      const fromPart = proceedingsFromDate || 'start';
+      const toPart = proceedingsToDate || 'end';
+      const statusPart = proceedingsDateIncludeAllStatuses ? 'all_statuses' : 'accepted';
+      return `proceedings_date_${fromPart}_to_${toPart}_${statusPart}_${dateSuffix}.doc`;
+    }
+
+    if (proceedingsMode === 'manual') {
+      return `proceedings_manual_${selectedCount}_articles_${dateSuffix}.doc`;
+    }
+
+    return `proceedings_all_accepted_${dateSuffix}.doc`;
+  };
+
+  const getProceedingsArticles = () => {
+    const sortByDate = (items: Article[]) =>
+      [...items].sort(
+        (a, b) => new Date(a.submitted_at).getTime() - new Date(b.submitted_at).getTime(),
+      );
+
+    if (proceedingsMode === 'conference') {
+      if (!proceedingsConferenceId) return [];
+      return sortByDate(
+        acceptedArticles.filter((article) => article.conference_id === proceedingsConferenceId),
+      );
+    }
+
+    if (proceedingsMode === 'all') {
+      return sortByDate(acceptedArticles);
+    }
+
+    if (proceedingsMode === 'manual') {
+      return sortByDate(articles.filter((article) => selectedProceedingsIds.includes(article.id)));
+    }
+
+    const fromDate = proceedingsFromDate
+      ? new Date(`${proceedingsFromDate}T00:00:00`).getTime()
+      : null;
+    const toDate = proceedingsToDate ? new Date(`${proceedingsToDate}T23:59:59.999`).getTime() : null;
+    const dateSource = proceedingsDateIncludeAllStatuses ? articles : acceptedArticles;
+
+    return sortByDate(
+      dateSource.filter((article) => {
+        const submittedAt = new Date(article.submitted_at).getTime();
+        if (fromDate !== null && submittedAt < fromDate) return false;
+        if (toDate !== null && submittedAt > toDate) return false;
+        return true;
+      }),
+    );
+  };
+
+  const buildProceedingsDocHtml = (items: Article[]) => {
+    const generatedAt = new Date().toLocaleString(i18n.resolvedLanguage);
+    const sections = items
+      .map((article, index) => {
+        const keywords = Array.isArray(article.keywords) ? article.keywords.join(', ') : '';
+        const fileName = article.file_name || '';
+
+        return `
+          <div class="article-block ${index > 0 ? 'page-break' : ''}">
+            <h2>${index + 1}. ${escapeHtml(article.title)}</h2>
+            <p><strong>${escapeHtml(t('app.fullName'))}:</strong> ${escapeHtml(article.profiles?.full_name || t('common.noData'))}</p>
+            <p><strong>${escapeHtml(t('app.institution'))}:</strong> ${escapeHtml(article.profiles?.institution || t('common.noData'))}</p>
+            <p><strong>${escapeHtml(t('articleStatus.accepted'))}:</strong> ${escapeHtml(getStatusLabel(article.status))}</p>
+            <p><strong>${escapeHtml(t('common.submittedOn', { date: '' }).replace(/\s+$/, ''))}:</strong> ${escapeHtml(formatDate(article.submitted_at))}</p>
+            <p><strong>${escapeHtml(t('submitArticle.keywordsLabel'))}:</strong> ${escapeHtml(keywords || t('common.noData'))}</p>
+            <h3>${escapeHtml(t('submitArticle.abstractLabel'))}</h3>
+            <p>${escapeHtml(article.abstract)}</p>
+            <p><strong>${escapeHtml(t('common.articleFile'))}:</strong> ${escapeHtml(fileName || t('common.noData'))}</p>
+          </div>
+        `;
+      })
+      .join('\n');
+
+    return `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>${escapeHtml(t('organizerDashboard.proceedingsDocumentTitle'))}</title>
+          <style>
+            body { font-family: "Times New Roman", serif; font-size: 12pt; line-height: 1.5; color: #111; }
+            h1 { font-size: 22pt; margin: 0 0 8pt; }
+            h2 { font-size: 16pt; margin: 16pt 0 8pt; }
+            h3 { font-size: 13pt; margin: 12pt 0 6pt; }
+            p { margin: 4pt 0; }
+            .meta { color: #333; margin-bottom: 16pt; }
+            .page-break { page-break-before: always; }
+          </style>
+        </head>
+        <body>
+          <h1>${escapeHtml(t('organizerDashboard.proceedingsDocumentTitle'))}</h1>
+          <p class="meta">${escapeHtml(t('organizerDashboard.proceedingsReadmeGeneratedAt'))}: ${escapeHtml(generatedAt)}</p>
+          <p class="meta">${escapeHtml(t('organizerDashboard.proceedingsReadmeIncluded'))}: ${items.length}</p>
+          ${sections}
+        </body>
+      </html>
+    `;
+  };
+
+  const handleGenerateProceedings = () => {
+    if (generatingProceedings) return;
+
+    setProceedingsMessage('');
+    setProceedingsError('');
+    setGeneratingProceedings(true);
+
+    try {
+      const proceedingsArticles = getProceedingsArticles();
+      if (proceedingsArticles.length === 0) {
+        setProceedingsError(t('organizerDashboard.proceedingsNoSelection'));
+        return;
+      }
+
+      const html = buildProceedingsDocHtml(proceedingsArticles);
+      const docBlob = new Blob(['\ufeff', html], {
+        type: 'application/msword;charset=utf-8',
+      });
+      downloadBlob(getProceedingsFilename(proceedingsArticles.length), docBlob);
+
+      setProceedingsMessage(t('organizerDashboard.proceedingsCreatedDoc', { count: proceedingsArticles.length }));
+    } catch (error) {
+      console.error('Error generating proceedings:', error);
+      setProceedingsError(t('organizerDashboard.proceedingsCreateDocError'));
+    } finally {
+      setGeneratingProceedings(false);
+    }
   };
 
   const getAssignmentState = (assignment: ArticleReviewAssignment) => {
@@ -496,8 +872,8 @@ const OrganizerDashboard: React.FC<OrganizerDashboardProps> = ({ currentPage = '
 
   const renderFilters = () => (
     <div className="app-card p-4">
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        <div className="dashboard-search-field">
+      <div className="dashboard-filters-toolbar">
+        <div className="dashboard-search-field dashboard-filters-search-full">
           <Search className="dashboard-search-icon" />
           <input
             value={articleSearch}
@@ -509,7 +885,7 @@ const OrganizerDashboard: React.FC<OrganizerDashboardProps> = ({ currentPage = '
         <select
           value={articleStatusFilter}
           onChange={(event) => setArticleStatusFilter(event.target.value as 'all' | ArticleStatus)}
-          className="app-input"
+          className="app-input dashboard-filters-select dashboard-filters-select-status"
         >
           <option value="all">{t('common.allStatuses')}</option>
           <option value="submitted">{t('articleStatus.submitted')}</option>
@@ -518,32 +894,44 @@ const OrganizerDashboard: React.FC<OrganizerDashboardProps> = ({ currentPage = '
           <option value="accepted_with_comments">{t('articleStatus.accepted_with_comments')}</option>
           <option value="rejected">{t('articleStatus.rejected')}</option>
         </select>
-        <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={() => exportArticles('accepted')}
-            className="inline-flex items-center gap-1 px-3 py-2 text-sm rounded-md bg-green-600 text-white hover:bg-green-700"
-          >
-            <FileDown className="h-4 w-4" />
-            <span>{t('organizerDashboard.exportAccepted')}</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => exportArticles('rejected')}
-            className="inline-flex items-center gap-1 px-3 py-2 text-sm rounded-md bg-red-600 text-white hover:bg-red-700"
-          >
-            <FileDown className="h-4 w-4" />
-            <span>{t('organizerDashboard.exportRejected')}</span>
-          </button>
-        </div>
+        <select
+          value={conferenceFilter}
+          onChange={(event) => setConferenceFilter(event.target.value)}
+          className="app-input dashboard-filters-select dashboard-filters-select-conference"
+        >
+          <option value="all">{t('common.allConferences')}</option>
+          {conferences.map((conference) => (
+            <option key={conference.id} value={conference.id}>
+              {conference.title}
+            </option>
+          ))}
+        </select>
+        <select
+          value={articleSort}
+          onChange={(event) => setArticleSort(event.target.value as ArticleSortOption)}
+          className="app-input dashboard-filters-select dashboard-filters-select-sort"
+        >
+          <option value="date_desc">{t('common.newestFirst')}</option>
+          <option value="date_asc">{t('common.oldestFirst')}</option>
+          <option value="title_asc">{t('common.titleAZ')}</option>
+          <option value="title_desc">{t('common.titleZA')}</option>
+        </select>
       </div>
     </div>
   );
 
-  const renderArticlesList = () => (
+  const renderArticlesList = (withManageAction = false) => (
     <div className="app-card">
-      <div className="app-card-header">
+      <div className="app-card-header flex items-center justify-between gap-3">
         <h2 className="text-lg font-medium text-gray-900">{t('organizerDashboard.allArticlesTitle')}</h2>
+        <button
+          type="button"
+          onClick={() => exportArticles('all')}
+          className="inline-flex items-center gap-1 px-3 py-2 text-sm rounded-md bg-gray-700 text-white hover:bg-gray-800"
+        >
+          <FileDown className="h-4 w-4" />
+          <span>{t('organizerDashboard.exportFiltered')}</span>
+        </button>
       </div>
       {filteredArticles.length === 0 ? (
         <div className="app-empty-state">
@@ -555,8 +943,20 @@ const OrganizerDashboard: React.FC<OrganizerDashboardProps> = ({ currentPage = '
         <>
           <div className="app-list-divider">
             {pagedArticles.pageItems.map((article) => (
-              <div key={article.id} className="app-list-item hover:bg-gray-50 transition-colors">
-                <div className="flex justify-between items-start">
+              <div
+                key={article.id}
+                role="button"
+                tabIndex={0}
+                onClick={() => handleOpenArticle(article)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    handleOpenArticle(article);
+                  }
+                }}
+                className="app-list-item hover:bg-gray-50 transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+              >
+                <div className="flex justify-between items-start gap-4">
                   <div className="flex-1">
                     <div className="flex items-center space-x-3">
                       <h3 className="text-lg font-medium text-gray-900">{article.title}</h3>
@@ -579,15 +979,11 @@ const OrganizerDashboard: React.FC<OrganizerDashboardProps> = ({ currentPage = '
                       )}
                     </div>
                   </div>
-                  <button
-                    onClick={() => {
-                      setSelectedArticle(article);
-                      fetchArticleDetails(article.id);
-                    }}
-                    className="ml-4 app-btn-primary"
-                  >
-                    {t('organizerDashboard.manageStatusButton')}
-                  </button>
+                  <div className="ml-4 flex items-center">
+                    <span className="text-xs text-gray-500">
+                      {withManageAction ? t('organizerDashboard.manageStatusButton') : t('authorDashboard.viewArticleButton')}
+                    </span>
+                  </div>
                 </div>
               </div>
             ))}
@@ -598,11 +994,157 @@ const OrganizerDashboard: React.FC<OrganizerDashboardProps> = ({ currentPage = '
     </div>
   );
 
+  const renderArticleDetails = () => {
+    if (!selectedArticle) return null;
+
+    return (
+      <div className="app-page">
+        <div className="flex items-center justify-between">
+          <h1 className="app-page-title">{t('authorDashboard.articleDetailsTitle')}</h1>
+          <button onClick={() => setSelectedArticle(null)} className="app-btn-ghost">
+            {t('common.backToArticles')}
+          </button>
+        </div>
+
+        <div className="app-card">
+          <div className="app-card-header">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-xl font-semibold text-gray-900">{selectedArticle.title}</h2>
+                <p className="text-sm text-gray-600 mt-1">
+                  {t('common.by', { name: selectedArticle.profiles?.full_name ?? t('common.noData') })}
+                  {' - '}
+                  {t('common.submittedOn', { date: formatDate(selectedArticle.submitted_at) })}
+                </p>
+                {selectedArticle.conferences?.title && (
+                  <p className="text-sm text-gray-600 mt-1">{selectedArticle.conferences.title}</p>
+                )}
+              </div>
+              <div className="flex items-center space-x-2">
+                {getStatusIcon(selectedArticle.status)}
+                <span className={`px-2 py-1 text-xs font-medium rounded-full ${getStatusColor(selectedArticle.status)}`}>
+                  {getStatusLabel(selectedArticle.status)}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div className="app-card-body app-page">
+            <div>
+              <h3 className="text-lg font-medium text-gray-900 mb-2">{t('submitArticle.abstractLabel')}</h3>
+              <p className="text-gray-700 leading-relaxed">{selectedArticle.abstract}</p>
+            </div>
+
+            {selectedArticle.keywords && selectedArticle.keywords.length > 0 && (
+              <div>
+                <h3 className="text-lg font-medium text-gray-900 mb-2">{t('submitArticle.keywordsLabel')}</h3>
+                <div className="flex flex-wrap gap-2">
+                  {selectedArticle.keywords.map((keyword, index) => (
+                    <span key={index} className="px-2 py-1 bg-blue-100 text-blue-800 text-sm rounded-md">
+                      {keyword}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div>
+              <h3 className="text-lg font-medium text-gray-900 mb-2">{t('common.articleFile')}</h3>
+              {selectedArticle.file_url ? (
+                articleFileUrl ? (
+                  <a href={articleFileUrl} target="_blank" rel="noopener noreferrer" className="app-icon-link">
+                    <FileText className="h-5 w-5" />
+                    <span>{selectedArticle.file_name || t('common.downloadPdf')}</span>
+                  </a>
+                ) : (
+                  <p className="text-sm text-gray-500">
+                    {articleFileLoading ? t('auth.submitLoading') : t('common.noData')}
+                  </p>
+                )
+              ) : (
+                <p className="text-sm text-gray-500">{t('common.noData')}</p>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="app-card">
+          <div className="app-card-header">
+            <h3 className="text-lg font-medium text-gray-900">{t('organizerDashboard.statusHistoryTitle')}</h3>
+          </div>
+          {statusHistory.length === 0 ? (
+            <p className="app-list-item text-sm text-gray-500">{t('common.noData')}</p>
+          ) : (
+            <div className="app-list-divider">
+              {statusHistory.map((history) => (
+                <div key={history.id} className="app-list-item">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-gray-600">{formatDateTime(history.created_at)}</span>
+                    <div className="flex items-center space-x-2">
+                      {history.old_status && (
+                        <>
+                          <span className={`px-2 py-1 text-xs rounded-full ${getStatusColor(history.old_status)}`}>
+                            {getStatusLabel(history.old_status)}
+                          </span>
+                          <span className="text-gray-400">{'->'}</span>
+                        </>
+                      )}
+                      <span className={`px-2 py-1 text-xs rounded-full ${getStatusColor(history.new_status)}`}>
+                        {getStatusLabel(history.new_status)}
+                      </span>
+                    </div>
+                  </div>
+                  {history.comments && <p className="mt-2 text-sm text-gray-700">{history.comments}</p>}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="app-card">
+          <div className="app-card-header">
+            <h3 className="text-lg font-medium text-gray-900">{t('organizerDashboard.reviewsTitle', { count: articleReviews.length })}</h3>
+          </div>
+          {articleReviews.length === 0 ? (
+            <p className="app-list-item text-sm text-gray-500">{t('common.noData')}</p>
+          ) : (
+            <div className="app-list-divider">
+              {articleReviews.map((review) => (
+                <div key={review.id} className="app-list-item">
+                  <p className="text-sm text-gray-600">
+                    {t('common.by', { name: review.profiles?.full_name ?? t('common.noData') })}
+                    {' - '}
+                    {t('common.reviewedOn', { date: formatDate(review.submitted_at || review.created_at) })}
+                  </p>
+                  <div className="mt-2 flex items-center space-x-4">
+                    <span className="text-sm text-gray-500">{t('common.rating', { rating: review.rating })}</span>
+                    <span
+                      className={`app-pill ${
+                        review.recommendation === 'accept'
+                          ? 'bg-green-100 text-green-800'
+                          : review.recommendation === 'accept_with_comments'
+                            ? 'bg-amber-100 text-amber-800'
+                            : 'bg-red-100 text-red-800'
+                      }`}
+                    >
+                      {getRecommendationLabel(review.recommendation)}
+                    </span>
+                  </div>
+                  <p className="mt-3 text-sm text-gray-700">{review.content}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   const renderReviewsPage = () => (
     <div className="app-page">
       <h1 className="app-page-title">{t('layout.nav.allReviews')}</h1>
       <div className="app-card p-4">
-        <div className="dashboard-search-grid">
+        <div className="dashboard-search-grid dashboard-search-grid-4">
           <div className="dashboard-search-field">
             <Search className="dashboard-search-icon" />
             <input
@@ -624,6 +1166,30 @@ const OrganizerDashboard: React.FC<OrganizerDashboardProps> = ({ currentPage = '
             <option value="accept_with_comments">{t('recommendation.accept_with_comments')}</option>
             <option value="reject">{t('recommendation.reject')}</option>
           </select>
+          <select
+            value={conferenceFilter}
+            onChange={(event) => setConferenceFilter(event.target.value)}
+            className="app-input"
+          >
+            <option value="all">{t('common.allConferences')}</option>
+            {conferences.map((conference) => (
+              <option key={conference.id} value={conference.id}>
+                {conference.title}
+              </option>
+              ))}
+            </select>
+            <select
+              value={reviewsSort}
+              onChange={(event) => setReviewsSort(event.target.value as ReviewSortOption)}
+              className="app-input"
+            >
+              <option value="date_desc">{t('common.newestFirst')}</option>
+              <option value="date_asc">{t('common.oldestFirst')}</option>
+              <option value="title_asc">{t('common.titleAZ')}</option>
+              <option value="title_desc">{t('common.titleZA')}</option>
+              <option value="rating_desc">{t('common.ratingHighToLow')}</option>
+              <option value="rating_asc">{t('common.ratingLowToHigh')}</option>
+            </select>
         </div>
       </div>
       <div className="app-card">
@@ -846,16 +1412,13 @@ const OrganizerDashboard: React.FC<OrganizerDashboardProps> = ({ currentPage = '
     );
   };
 
-  const renderManagePage = () => {
-    if (selectedArticle) return renderManageDetails();
-    return (
-      <div className="app-page">
-        <h1 className="app-page-title">{t('layout.nav.manageStatus')}</h1>
-        {renderFilters()}
-        {renderArticlesList()}
-      </div>
-    );
-  };
+  const renderManagePage = () => (
+    <div className="app-page">
+      <h1 className="app-page-title">{t('layout.nav.manageStatus')}</h1>
+      {renderFilters()}
+      {renderArticlesList(true)}
+    </div>
+  );
 
   const renderDashboardPage = () => (
     <div className="app-page">
@@ -903,19 +1466,165 @@ const OrganizerDashboard: React.FC<OrganizerDashboardProps> = ({ currentPage = '
         </div>
       </div>
 
-      <div className="app-card p-4">
-        <button
-          type="button"
-          onClick={() => exportArticles('all')}
-          className="inline-flex items-center gap-1 px-3 py-2 text-sm rounded-md bg-gray-700 text-white hover:bg-gray-800"
-        >
-          <FileDown className="h-4 w-4" />
-          <span>{t('organizerDashboard.exportFiltered')}</span>
-        </button>
+      <div className="app-card p-4 space-y-3">
+        <div className="space-y-3 border border-gray-200 rounded-lg p-3">
+          <div>
+            <h2 className="text-base font-semibold text-gray-900">
+              {t('organizerDashboard.proceedingsTitle')}
+            </h2>
+            <p className="text-sm text-gray-600 mt-1">
+              {t('organizerDashboard.proceedingsDescription', { count: proceedingsPoolCount })}
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div>
+              <label className="app-label">{t('organizerDashboard.proceedingsModeLabel')}</label>
+              <select
+                value={proceedingsMode}
+                onChange={(event) =>
+                  setProceedingsMode(event.target.value as 'conference' | 'all' | 'date' | 'manual')
+                }
+                className="app-input"
+              >
+                <option value="conference">{t('organizerDashboard.proceedingsModeConference')}</option>
+                <option value="all">{t('organizerDashboard.proceedingsModeAll')}</option>
+                <option value="date">{t('organizerDashboard.proceedingsModeDate')}</option>
+                <option value="manual">{t('organizerDashboard.proceedingsModeManual')}</option>
+              </select>
+            </div>
+
+            {proceedingsMode === 'conference' && (
+              <div>
+                <label className="app-label">{t('organizerDashboard.proceedingsConference')}</label>
+                <select
+                  value={proceedingsConferenceId}
+                  onChange={(event) => setProceedingsConferenceId(event.target.value)}
+                  className="app-input"
+                >
+                  <option value="">{t('submitArticle.conferencePlaceholder')}</option>
+                  {conferences.map((conference) => (
+                    <option key={conference.id} value={conference.id}>
+                      {conference.title}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {proceedingsMode === 'date' && (
+              <>
+                <div>
+                  <label className="app-label">{t('organizerDashboard.proceedingsFromDate')}</label>
+                  <input
+                    type="date"
+                    value={proceedingsFromDate}
+                    onChange={(event) => setProceedingsFromDate(event.target.value)}
+                    className="app-input"
+                  />
+                </div>
+                <div>
+                  <label className="app-label">{t('organizerDashboard.proceedingsToDate')}</label>
+                  <input
+                    type="date"
+                    value={proceedingsToDate}
+                    onChange={(event) => setProceedingsToDate(event.target.value)}
+                    className="app-input"
+                  />
+                </div>
+                <div className="md:col-span-3">
+                  <label className="inline-flex items-center gap-2 text-sm text-gray-700">
+                    <input
+                      type="checkbox"
+                      checked={proceedingsDateIncludeAllStatuses}
+                      onChange={(event) => setProceedingsDateIncludeAllStatuses(event.target.checked)}
+                    />
+                    <span>{t('organizerDashboard.proceedingsIncludeAllStatuses')}</span>
+                  </label>
+                </div>
+              </>
+            )}
+          </div>
+
+          {proceedingsMode === 'manual' && (
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm text-gray-700">{t('organizerDashboard.proceedingsPickArticles')}</p>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedProceedingsIds(articles.map((article) => article.id))}
+                    className="text-sm app-link-primary"
+                  >
+                    {t('organizerDashboard.proceedingsSelectAll')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedProceedingsIds([])}
+                    className="text-sm app-link-primary"
+                  >
+                    {t('organizerDashboard.proceedingsClearSelection')}
+                  </button>
+                </div>
+              </div>
+
+              {articles.length === 0 ? (
+                <p className="text-sm text-gray-500">{t('organizerDashboard.proceedingsNoAccepted')}</p>
+              ) : (
+                <div className="max-h-56 overflow-auto rounded-md border border-gray-200">
+                  {articles.map((article) => (
+                    <label
+                      key={article.id}
+                      className="flex items-start gap-3 p-3 border-b border-gray-100 last:border-b-0 cursor-pointer"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedProceedingsIds.includes(article.id)}
+                        onChange={(event) => {
+                          if (event.target.checked) {
+                            setSelectedProceedingsIds((prev) => [...prev, article.id]);
+                          } else {
+                            setSelectedProceedingsIds((prev) => prev.filter((id) => id !== article.id));
+                          }
+                        }}
+                        className="mt-1"
+                      />
+                      <div>
+                        <p className="text-sm font-medium text-gray-900">{article.title}</p>
+                        <p className="text-xs text-gray-600">
+                          {t('common.by', { name: article.profiles?.full_name ?? t('common.noData') })}
+                          {' - '}
+                          {formatDate(article.submitted_at)}
+                        </p>
+                        <p className="text-xs text-gray-500 mt-1">{getStatusLabel(article.status)}</p>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={handleGenerateProceedings}
+            disabled={generatingProceedings}
+            className="inline-flex items-center gap-1 px-3 py-2 text-sm rounded-md bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <FileText className="h-4 w-4" />
+            <span>
+              {generatingProceedings
+                ? t('organizerDashboard.generatingProceedingsDoc')
+                : t('organizerDashboard.generateProceedingsDoc')}
+            </span>
+          </button>
+        </div>
+        {proceedingsMessage && <p className="text-sm text-green-600">{proceedingsMessage}</p>}
+        {proceedingsError && <p className="text-sm text-red-600">{proceedingsError}</p>}
       </div>
 
       {renderFilters()}
-      {renderArticlesList()}
+      {renderArticlesList(false)}
     </div>
   );
 
@@ -927,6 +1636,8 @@ const OrganizerDashboard: React.FC<OrganizerDashboardProps> = ({ currentPage = '
     );
   }
 
+  if (selectedArticle && currentPage === 'manage') return renderManageDetails();
+  if (selectedArticle) return renderArticleDetails();
   if (currentPage === 'reviews') return renderReviewsPage();
   if (currentPage === 'manage') return renderManagePage();
   return renderDashboardPage();

@@ -2,16 +2,36 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { AlertCircle, FileText, Search, Star, Send } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { supabase } from '../../lib/supabase';
-import { Article, Review } from '../../types/database.types';
+import { Article, Conference, Review } from '../../types/database.types';
 import { useAuth } from '../../contexts/AuthContext';
-import { DEFAULT_PAGE_SIZE, paginateItems } from '../../utils/pagination';
+import { paginateItems } from '../../utils/pagination';
+import {
+  formatDateByPreferences,
+  getStoredListSortOption,
+  getStoredPageSize,
+  setListSortPreference,
+} from '../../utils/preferences';
 
 interface ReviewerDashboardProps {
   currentPage?: string;
 }
 
+const ARTICLE_SORT_OPTIONS = ['date_desc', 'date_asc', 'title_asc', 'title_desc'] as const;
+type ArticleSortOption = (typeof ARTICLE_SORT_OPTIONS)[number];
+
+const REVIEW_SORT_OPTIONS = [
+  'date_desc',
+  'date_asc',
+  'title_asc',
+  'title_desc',
+  'rating_desc',
+  'rating_asc',
+] as const;
+type ReviewSortOption = (typeof REVIEW_SORT_OPTIONS)[number];
+
 const ReviewerDashboard: React.FC<ReviewerDashboardProps> = ({ currentPage = 'reviews' }) => {
   const { t, i18n } = useTranslation();
+  const locale = i18n.resolvedLanguage || i18n.language || 'en';
   const activePage = currentPage === 'articles' ? 'articles' : 'reviews';
   const [articles, setArticles] = useState<Article[]>([]);
   const [reviews, setReviews] = useState<Review[]>([]);
@@ -28,16 +48,24 @@ const ReviewerDashboard: React.FC<ReviewerDashboardProps> = ({ currentPage = 're
   const [assignmentDeadlines, setAssignmentDeadlines] = useState<Record<string, string | undefined>>({});
   const [articlesSearch, setArticlesSearch] = useState('');
   const [reviewsSearch, setReviewsSearch] = useState('');
+  const [conferences, setConferences] = useState<Conference[]>([]);
+  const [conferenceFilter, setConferenceFilter] = useState<string>('all');
   const [articlesDeadlineFilter, setArticlesDeadlineFilter] = useState<'all' | 'overdue' | 'upcoming'>('all');
   const [reviewsRecommendationFilter, setReviewsRecommendationFilter] = useState<
     'all' | 'accept' | 'accept_with_comments' | 'reject'
   >('all');
+  const [articlesSort, setArticlesSort] = useState<ArticleSortOption>(() =>
+    getStoredListSortOption('reviewer.articles', ARTICLE_SORT_OPTIONS, 'date_desc'),
+  );
+  const [reviewsSort, setReviewsSort] = useState<ReviewSortOption>(() =>
+    getStoredListSortOption('reviewer.reviews', REVIEW_SORT_OPTIONS, 'date_desc'),
+  );
   const [articlesPage, setArticlesPage] = useState(1);
   const [reviewsPage, setReviewsPage] = useState(1);
   const { user } = useAuth();
-  const pageSize = DEFAULT_PAGE_SIZE;
+  const pageSize = getStoredPageSize();
 
-  const formatDate = (date: string) => new Date(date).toLocaleDateString(i18n.resolvedLanguage);
+  const formatDate = (date: string) => formatDateByPreferences(date, locale);
   const getRecommendationLabel = (recommendation: string) => t(`recommendation.${recommendation}`);
   const getAssignmentDueAt = (articleId: string) => assignmentDeadlines[articleId];
   const isAssignmentOverdue = (articleId: string) => {
@@ -97,7 +125,8 @@ const ReviewerDashboard: React.FC<ReviewerDashboardProps> = ({ currentPage = 're
         .from('articles')
         .select(`
           *,
-          profiles:author_id(full_name, institution)
+          profiles:author_id(full_name, institution),
+          conferences:conference_id(id, title)
         `)
         .in('id', assignmentIds)
         .neq('author_id', user.id)
@@ -136,6 +165,8 @@ const ReviewerDashboard: React.FC<ReviewerDashboardProps> = ({ currentPage = 're
           *,
           articles(
             title,
+            conference_id,
+            conferences:conference_id(id, title),
             profiles:author_id(full_name)
           )
         `)
@@ -151,12 +182,26 @@ const ReviewerDashboard: React.FC<ReviewerDashboardProps> = ({ currentPage = 're
     }
   }, [user]);
 
+  const fetchConferences = useCallback(async () => {
+    try {
+      const { data, error } = await supabase
+        .from('conferences')
+        .select('id, title, start_date, end_date, status, is_public')
+        .order('start_date', { ascending: false });
+      if (error) throw error;
+      setConferences((data as Conference[]) || []);
+    } catch (fetchError) {
+      console.error('Error fetching conferences:', fetchError);
+    }
+  }, []);
+
   useEffect(() => {
     if (user) {
       fetchAvailableArticles();
       fetchMyReviews();
+      fetchConferences();
     }
-  }, [user, fetchAvailableArticles, fetchMyReviews]);
+  }, [user, fetchAvailableArticles, fetchMyReviews, fetchConferences]);
 
   useEffect(() => {
     setSelectedArticle(null);
@@ -164,11 +209,19 @@ const ReviewerDashboard: React.FC<ReviewerDashboardProps> = ({ currentPage = 're
 
   useEffect(() => {
     setArticlesPage(1);
-  }, [articlesSearch, articlesDeadlineFilter]);
+  }, [articlesSearch, articlesDeadlineFilter, conferenceFilter, articlesSort]);
 
   useEffect(() => {
     setReviewsPage(1);
-  }, [reviewsSearch, reviewsRecommendationFilter]);
+  }, [reviewsSearch, reviewsRecommendationFilter, conferenceFilter, reviewsSort]);
+
+  useEffect(() => {
+    setListSortPreference('reviewer.articles', articlesSort);
+  }, [articlesSort]);
+
+  useEffect(() => {
+    setListSortPreference('reviewer.reviews', reviewsSort);
+  }, [reviewsSort]);
 
   useEffect(() => {
     let cancelled = false;
@@ -266,9 +319,10 @@ const ReviewerDashboard: React.FC<ReviewerDashboardProps> = ({ currentPage = 're
         articlesDeadlineFilter === 'all' ||
         (articlesDeadlineFilter === 'overdue' && overdue) ||
         (articlesDeadlineFilter === 'upcoming' && !overdue);
-      return matchesSearch && matchesDeadline;
+      const matchesConference = conferenceFilter === 'all' || article.conference_id === conferenceFilter;
+      return matchesSearch && matchesDeadline && matchesConference;
     });
-  }, [articles, articlesSearch, articlesDeadlineFilter, assignmentDeadlines]);
+  }, [articles, articlesSearch, articlesDeadlineFilter, assignmentDeadlines, conferenceFilter]);
 
   const filteredReviews = useMemo(() => {
     const query = reviewsSearch.trim().toLowerCase();
@@ -280,12 +334,68 @@ const ReviewerDashboard: React.FC<ReviewerDashboardProps> = ({ currentPage = 're
         (review.articles?.profiles?.full_name || '').toLowerCase().includes(query);
       const matchesRecommendation =
         reviewsRecommendationFilter === 'all' || review.recommendation === reviewsRecommendationFilter;
-      return matchesSearch && matchesRecommendation;
+      const matchesConference =
+        conferenceFilter === 'all' || review.articles?.conference_id === conferenceFilter;
+      return matchesSearch && matchesRecommendation && matchesConference;
     });
-  }, [reviews, reviewsSearch, reviewsRecommendationFilter]);
+  }, [reviews, reviewsSearch, reviewsRecommendationFilter, conferenceFilter]);
 
-  const pagedArticles = paginateItems(filteredArticles, articlesPage, pageSize);
-  const pagedReviews = paginateItems(filteredReviews, reviewsPage, pageSize);
+  const sortedArticles = useMemo(() => {
+    const items = [...filteredArticles];
+    switch (articlesSort) {
+      case 'date_asc':
+        return items.sort(
+          (a, b) => new Date(a.submitted_at).getTime() - new Date(b.submitted_at).getTime(),
+        );
+      case 'title_asc':
+        return items.sort((a, b) => a.title.localeCompare(b.title, locale, { sensitivity: 'base' }));
+      case 'title_desc':
+        return items.sort((a, b) => b.title.localeCompare(a.title, locale, { sensitivity: 'base' }));
+      case 'date_desc':
+      default:
+        return items.sort(
+          (a, b) => new Date(b.submitted_at).getTime() - new Date(a.submitted_at).getTime(),
+        );
+    }
+  }, [filteredArticles, articlesSort, locale]);
+
+  const sortedReviews = useMemo(() => {
+    const items = [...filteredReviews];
+    switch (reviewsSort) {
+      case 'date_asc':
+        return items.sort(
+          (a, b) =>
+            new Date(a.submitted_at || a.created_at).getTime() -
+            new Date(b.submitted_at || b.created_at).getTime(),
+        );
+      case 'title_asc':
+        return items.sort((a, b) =>
+          (a.articles?.title || '').localeCompare(b.articles?.title || '', locale, {
+            sensitivity: 'base',
+          }),
+        );
+      case 'title_desc':
+        return items.sort((a, b) =>
+          (b.articles?.title || '').localeCompare(a.articles?.title || '', locale, {
+            sensitivity: 'base',
+          }),
+        );
+      case 'rating_asc':
+        return items.sort((a, b) => a.rating - b.rating);
+      case 'rating_desc':
+        return items.sort((a, b) => b.rating - a.rating);
+      case 'date_desc':
+      default:
+        return items.sort(
+          (a, b) =>
+            new Date(b.submitted_at || b.created_at).getTime() -
+            new Date(a.submitted_at || a.created_at).getTime(),
+        );
+    }
+  }, [filteredReviews, reviewsSort, locale]);
+
+  const pagedArticles = paginateItems(sortedArticles, articlesPage, pageSize);
+  const pagedReviews = paginateItems(sortedReviews, reviewsPage, pageSize);
 
   useEffect(() => {
     if (pagedArticles.safePage !== articlesPage) setArticlesPage(pagedArticles.safePage);
@@ -485,11 +595,25 @@ const ReviewerDashboard: React.FC<ReviewerDashboardProps> = ({ currentPage = 're
 
   return (
     <div className="app-page-lg">
-      <h1 className="app-page-title">
-        {activePage === 'reviews'
-          ? t('reviewerDashboard.myReviewsTitle')
-          : t('reviewerDashboard.articlesToReviewTitle')}
-      </h1>
+      <div className="flex items-center justify-between">
+        <h1 className="app-page-title">
+          {activePage === 'reviews'
+            ? t('reviewerDashboard.myReviewsTitle')
+            : t('reviewerDashboard.articlesToReviewTitle')}
+        </h1>
+        <select
+          value={conferenceFilter}
+          onChange={(event) => setConferenceFilter(event.target.value)}
+          className="app-input max-w-xs"
+        >
+          <option value="all">{t('common.allConferences')}</option>
+          {conferences.map((conference) => (
+            <option key={conference.id} value={conference.id}>
+              {conference.title}
+            </option>
+          ))}
+        </select>
+      </div>
 
       {activePage === 'articles' && (
         <div className="app-card">
@@ -500,7 +624,7 @@ const ReviewerDashboard: React.FC<ReviewerDashboardProps> = ({ currentPage = 're
           </div>
 
           <div className="app-card-header border-gray-100">
-            <div className="dashboard-search-grid">
+            <div className="dashboard-search-grid dashboard-search-grid-3">
               <div className="dashboard-search-field">
                 <Search className="dashboard-search-icon" />
                 <input
@@ -520,6 +644,16 @@ const ReviewerDashboard: React.FC<ReviewerDashboardProps> = ({ currentPage = 're
                 <option value="all">{t('reviewerDashboard.allDeadlines')}</option>
                 <option value="overdue">{t('reviewerDashboard.overdueOnly')}</option>
                 <option value="upcoming">{t('reviewerDashboard.upcomingOnly')}</option>
+              </select>
+              <select
+                value={articlesSort}
+                onChange={(event) => setArticlesSort(event.target.value as ArticleSortOption)}
+                className="app-input dashboard-search-grid-sort-full"
+              >
+                <option value="date_desc">{t('common.newestFirst')}</option>
+                <option value="date_asc">{t('common.oldestFirst')}</option>
+                <option value="title_asc">{t('common.titleAZ')}</option>
+                <option value="title_desc">{t('common.titleZA')}</option>
               </select>
             </div>
           </div>
@@ -578,7 +712,7 @@ const ReviewerDashboard: React.FC<ReviewerDashboardProps> = ({ currentPage = 're
           </div>
 
           <div className="app-card-header border-gray-100">
-            <div className="dashboard-search-grid">
+            <div className="dashboard-search-grid dashboard-search-grid-3">
               <div className="dashboard-search-field">
                 <Search className="dashboard-search-icon" />
                 <input
@@ -601,6 +735,18 @@ const ReviewerDashboard: React.FC<ReviewerDashboardProps> = ({ currentPage = 're
                 <option value="accept">{t('recommendation.accept')}</option>
                 <option value="accept_with_comments">{t('recommendation.accept_with_comments')}</option>
                 <option value="reject">{t('recommendation.reject')}</option>
+              </select>
+              <select
+                value={reviewsSort}
+                onChange={(event) => setReviewsSort(event.target.value as ReviewSortOption)}
+                className="app-input"
+              >
+                <option value="date_desc">{t('common.newestFirst')}</option>
+                <option value="date_asc">{t('common.oldestFirst')}</option>
+                <option value="title_asc">{t('common.titleAZ')}</option>
+                <option value="title_desc">{t('common.titleZA')}</option>
+                <option value="rating_desc">{t('common.ratingHighToLow')}</option>
+                <option value="rating_asc">{t('common.ratingLowToHigh')}</option>
               </select>
             </div>
           </div>

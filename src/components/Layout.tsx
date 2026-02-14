@@ -39,6 +39,7 @@ const Layout: React.FC<LayoutProps> = ({ children, currentPage, onPageChange }) 
           { id: 'dashboard', labelKey: 'layout.nav.allArticles', icon: FileText },
           { id: 'reviews', labelKey: 'layout.nav.allReviews', icon: Users },
           { id: 'manage', labelKey: 'layout.nav.manageStatus', icon: Settings },
+          { id: 'roles', labelKey: 'layout.nav.roles', icon: User },
           ...commonItems,
         ];
       default:

@@ -4,9 +4,11 @@ import { useTranslation } from 'react-i18next';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { Notification as DbNotification } from '../types/database.types';
+import { formatDateTimeByPreferences } from '../utils/preferences';
 
 const NotificationsPage: React.FC = () => {
   const { t, i18n } = useTranslation();
+  const locale = i18n.resolvedLanguage || i18n.language || 'en';
   const { user } = useAuth();
   const [notifications, setNotifications] = useState<DbNotification[]>([]);
   const [loading, setLoading] = useState(true);
@@ -18,7 +20,7 @@ const NotificationsPage: React.FC = () => {
     [notifications],
   );
 
-  const formatDateTime = (date: string) => new Date(date).toLocaleString(i18n.resolvedLanguage);
+  const formatDateTime = (date: string) => formatDateTimeByPreferences(date, locale);
 
   const fetchNotifications = useCallback(async () => {
     if (!user) return;

@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import { FileText, Mail, Lock, User, Building } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../contexts/AuthContext';
-import { UserRole } from '../../types/database.types';
 import LanguageSwitcher from '../LanguageSwitcher';
 
 const AuthForm: React.FC = () => {
@@ -12,7 +11,6 @@ const AuthForm: React.FC = () => {
     email: '',
     password: '',
     fullName: '',
-    role: 'author' as UserRole,
     institution: '',
   });
   const [loading, setLoading] = useState(false);
@@ -33,7 +31,6 @@ const AuthForm: React.FC = () => {
           formData.email,
           formData.password,
           formData.fullName,
-          formData.role,
           formData.institution
         );
       }
@@ -46,15 +43,6 @@ const AuthForm: React.FC = () => {
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
-
-    if (name === 'role') {
-      setFormData((prev) => ({
-        ...prev,
-        role: value as UserRole,
-      }));
-      return;
-    }
-
     const field = name as 'email' | 'password' | 'fullName' | 'institution';
     setFormData(prev => ({
       ...prev,
@@ -143,23 +131,6 @@ const AuthForm: React.FC = () => {
                     />
                     <User className="auth-icon" />
                   </div>
-                </div>
-
-                <div>
-                  <label htmlFor="role" className="auth-label">
-                    {t('auth.roleLabel')}
-                  </label>
-                  <select
-                    id="role"
-                    name="role"
-                    value={formData.role}
-                    onChange={handleInputChange}
-                    className="auth-select"
-                  >
-                    <option value="author">{t('role.author')}</option>
-                    <option value="reviewer">{t('role.reviewer')}</option>
-                    <option value="organizer">{t('role.organizer')}</option>
-                  </select>
                 </div>
 
                 <div>

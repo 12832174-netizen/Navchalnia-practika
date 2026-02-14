@@ -1,8 +1,10 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Upload, FileText, Save, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
+import { Conference } from '../../types/database.types';
+import { isSupportedArticleFile } from '../../utils/articleFiles';
 
 const SubmitArticle: React.FC = () => {
   const { t } = useTranslation();
@@ -12,10 +14,31 @@ const SubmitArticle: React.FC = () => {
     keywords: '',
   });
   const [file, setFile] = useState<File | null>(null);
+  const [conferences, setConferences] = useState<Conference[]>([]);
+  const [selectedConferenceId, setSelectedConferenceId] = useState('');
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState('');
   const { user } = useAuth();
+
+  useEffect(() => {
+    const fetchConferences = async () => {
+      try {
+        const { data, error: conferencesError } = await supabase
+          .from('conferences')
+          .select('id, title, start_date, end_date, status, is_public')
+          .eq('is_public', true)
+          .order('start_date', { ascending: false });
+
+        if (conferencesError) throw conferencesError;
+        setConferences((data as Conference[]) || []);
+      } catch (fetchError) {
+        console.error('Error loading conferences:', fetchError);
+      }
+    };
+
+    fetchConferences();
+  }, []);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     setFormData(prev => ({
@@ -27,7 +50,7 @@ const SubmitArticle: React.FC = () => {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
     if (selectedFile) {
-      if (selectedFile.type !== 'application/pdf') {
+      if (!isSupportedArticleFile(selectedFile)) {
         setError(t('submitArticle.invalidFileType'));
         return;
       }
@@ -43,6 +66,10 @@ const SubmitArticle: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) return;
+    if (conferences.length > 0 && !selectedConferenceId) {
+      setError(t('submitArticle.conferenceRequired'));
+      return;
+    }
 
     setLoading(true);
     setError('');
@@ -75,6 +102,7 @@ const SubmitArticle: React.FC = () => {
             keywords: formData.keywords.split(',').map(k => k.trim()).filter(k => k),
             file_url: filePath,
             file_name: fileName,
+            conference_id: selectedConferenceId || null,
             author_id: user.id,
           },
         ]);
@@ -83,6 +111,7 @@ const SubmitArticle: React.FC = () => {
 
       setSuccess(true);
       setFormData({ title: '', abstract: '', keywords: '' });
+      setSelectedConferenceId('');
       setFile(null);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err));
@@ -130,6 +159,30 @@ const SubmitArticle: React.FC = () => {
             <p className="app-alert-error-text">{error}</p>
           </div>
         )}
+
+        <div>
+          <label htmlFor="conference_id" className="app-label">
+            {t('submitArticle.conferenceLabel')}
+          </label>
+          <select
+            id="conference_id"
+            name="conference_id"
+            value={selectedConferenceId}
+            onChange={(event) => setSelectedConferenceId(event.target.value)}
+            required={conferences.length > 0}
+            className="app-input"
+          >
+            <option value="">{t('submitArticle.conferencePlaceholder')}</option>
+            {conferences.map((conference) => (
+              <option key={conference.id} value={conference.id}>
+                {conference.title}
+              </option>
+            ))}
+          </select>
+          {conferences.length === 0 && (
+            <p className="mt-2 text-sm text-amber-600">{t('submitArticle.noConferencesAvailable')}</p>
+          )}
+        </div>
 
         <div>
           <label htmlFor="title" className="app-label">
@@ -196,7 +249,7 @@ const SubmitArticle: React.FC = () => {
                 <input
                   id="file-upload"
                   type="file"
-                  accept=".pdf"
+                  accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                   onChange={handleFileChange}
                   className="hidden"
                 />
@@ -230,7 +283,7 @@ const SubmitArticle: React.FC = () => {
         <div className="flex justify-end space-x-4 pt-6">
           <button
             type="submit"
-            disabled={loading || !formData.title || !formData.abstract}
+            disabled={loading || !formData.title || !formData.abstract || (conferences.length > 0 && !selectedConferenceId)}
             className="app-btn-primary-lg flex items-center space-x-2"
           >
             <Save className="h-4 w-4" />

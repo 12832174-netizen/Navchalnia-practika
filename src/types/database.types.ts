@@ -28,6 +28,8 @@ export interface Article {
   file_name?: string;
   author_id: string;
   conference_id?: string | null;
+  section_id?: string | null;
+  language?: 'uk' | 'en' | null;
   status: ArticleStatus;
   review_due_at?: string;
   presentation_starts_at?: string;

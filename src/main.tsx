@@ -11,13 +11,10 @@ import './styles/components/dashboard.css';
 import './styles/components/layout.css';
 import './styles/components/notifications.css';
 import './styles/components/profile-settings.css';
-import './styles/preferences/density.css';
 import './i18n';
 import { initializeTheme } from './utils/theme';
-import { initializeDensity } from './utils/preferences';
 
 initializeTheme();
-initializeDensity();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

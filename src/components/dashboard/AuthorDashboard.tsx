@@ -1,24 +1,57 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { FileText, Eye, Clock, CheckCircle, XCircle, AlertCircle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { supabase } from '../../lib/supabase';
-import { Article, Review, ArticleStatusHistory } from '../../types/database.types';
+import { Article, Conference, Review, ArticleStatusHistory } from '../../types/database.types';
 import { useAuth } from '../../contexts/AuthContext';
+import { paginateItems } from '../../utils/pagination';
+import {
+  formatDateByPreferences,
+  formatDateTimeByPreferences,
+  getStoredListSortOption,
+  getStoredPageSize,
+  setListSortPreference,
+} from '../../utils/preferences';
+
+const ARTICLE_SORT_OPTIONS = ['date_desc', 'date_asc', 'title_asc', 'title_desc'] as const;
+type ArticleSortOption = (typeof ARTICLE_SORT_OPTIONS)[number];
+
+const REVIEW_SORT_OPTIONS = [
+  'date_desc',
+  'date_asc',
+  'title_asc',
+  'title_desc',
+  'rating_desc',
+  'rating_asc',
+] as const;
+type ReviewSortOption = (typeof REVIEW_SORT_OPTIONS)[number];
 
 const AuthorDashboard: React.FC = () => {
   const { t, i18n } = useTranslation();
+  const locale = i18n.resolvedLanguage || i18n.language || 'en';
   const [articles, setArticles] = useState<Article[]>([]);
   const [reviews, setReviews] = useState<Review[]>([]);
   const [selectedArticle, setSelectedArticle] = useState<Article | null>(null);
   const [articleReviews, setArticleReviews] = useState<Review[]>([]);
   const [statusHistory, setStatusHistory] = useState<ArticleStatusHistory[]>([]);
+  const [conferences, setConferences] = useState<Conference[]>([]);
+  const [conferenceFilter, setConferenceFilter] = useState<string>('all');
+  const [articlesSort, setArticlesSort] = useState<ArticleSortOption>(() =>
+    getStoredListSortOption('author.articles', ARTICLE_SORT_OPTIONS, 'date_desc'),
+  );
+  const [reviewsSort, setReviewsSort] = useState<ReviewSortOption>(() =>
+    getStoredListSortOption('author.reviews', REVIEW_SORT_OPTIONS, 'date_desc'),
+  );
+  const [articlesPage, setArticlesPage] = useState(1);
+  const [reviewsPage, setReviewsPage] = useState(1);
   const [articleFileUrl, setArticleFileUrl] = useState<string | null>(null);
   const [articleFileLoading, setArticleFileLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const { user } = useAuth();
+  const pageSize = getStoredPageSize();
 
-  const formatDate = (date: string) => new Date(date).toLocaleDateString(i18n.resolvedLanguage);
-  const formatDateTime = (date: string) => new Date(date).toLocaleString(i18n.resolvedLanguage);
+  const formatDate = (date: string) => formatDateByPreferences(date, locale);
+  const formatDateTime = (date: string) => formatDateTimeByPreferences(date, locale);
   const getStatusLabel = (status: string) => t(`articleStatus.${status}`);
   const getRecommendationLabel = (recommendation: string) => t(`recommendation.${recommendation}`);
 
@@ -53,7 +86,10 @@ const AuthorDashboard: React.FC = () => {
     try {
       const { data, error } = await supabase
         .from('articles')
-        .select('*')
+        .select(`
+          *,
+          conferences:conference_id(id, title)
+        `)
         .eq('author_id', user.id)
         .order('created_at', { ascending: false });
 
@@ -72,7 +108,13 @@ const AuthorDashboard: React.FC = () => {
         .from('reviews')
         .select(`
           *,
-          articles!inner(id, title, author_id),
+          articles!inner(
+            id,
+            title,
+            author_id,
+            conference_id,
+            conferences:conference_id(id, title)
+          ),
           profiles!reviews_reviewer_id_fkey(full_name)
         `)
         .eq('articles.author_id', user.id)
@@ -88,12 +130,26 @@ const AuthorDashboard: React.FC = () => {
     }
   }, [user]);
 
+  const fetchConferences = useCallback(async () => {
+    try {
+      const { data, error } = await supabase
+        .from('conferences')
+        .select('id, title, start_date, end_date, status, is_public')
+        .order('start_date', { ascending: false });
+      if (error) throw error;
+      setConferences((data as Conference[]) || []);
+    } catch (fetchError) {
+      console.error('Error fetching conferences:', fetchError);
+    }
+  }, []);
+
   useEffect(() => {
     if (user) {
       fetchArticles();
       fetchReviews();
+      fetchConferences();
     }
-  }, [user, fetchArticles, fetchReviews]);
+  }, [user, fetchArticles, fetchReviews, fetchConferences]);
 
   useEffect(() => {
     let cancelled = false;
@@ -177,6 +233,127 @@ const AuthorDashboard: React.FC = () => {
     setSelectedArticle(article);
     fetchArticleDetails(article.id);
   };
+
+  const filteredArticles = useMemo(
+    () =>
+      articles.filter((article) => {
+        if (conferenceFilter === 'all') return true;
+        return article.conference_id === conferenceFilter;
+      }),
+    [articles, conferenceFilter],
+  );
+
+  const filteredReviews = useMemo(
+    () =>
+      reviews.filter((review) => {
+        if (conferenceFilter === 'all') return true;
+        return review.articles?.conference_id === conferenceFilter;
+      }),
+    [reviews, conferenceFilter],
+  );
+
+  const sortedArticles = useMemo(() => {
+    const items = [...filteredArticles];
+    switch (articlesSort) {
+      case 'date_asc':
+        return items.sort(
+          (a, b) => new Date(a.submitted_at).getTime() - new Date(b.submitted_at).getTime(),
+        );
+      case 'title_asc':
+        return items.sort((a, b) => a.title.localeCompare(b.title, locale, { sensitivity: 'base' }));
+      case 'title_desc':
+        return items.sort((a, b) => b.title.localeCompare(a.title, locale, { sensitivity: 'base' }));
+      case 'date_desc':
+      default:
+        return items.sort(
+          (a, b) => new Date(b.submitted_at).getTime() - new Date(a.submitted_at).getTime(),
+        );
+    }
+  }, [filteredArticles, articlesSort, locale]);
+
+  const sortedReviews = useMemo(() => {
+    const items = [...filteredReviews];
+    switch (reviewsSort) {
+      case 'date_asc':
+        return items.sort(
+          (a, b) =>
+            new Date(a.submitted_at || a.created_at).getTime() -
+            new Date(b.submitted_at || b.created_at).getTime(),
+        );
+      case 'title_asc':
+        return items.sort((a, b) =>
+          (a.articles?.title || '').localeCompare(b.articles?.title || '', locale, {
+            sensitivity: 'base',
+          }),
+        );
+      case 'title_desc':
+        return items.sort((a, b) =>
+          (b.articles?.title || '').localeCompare(a.articles?.title || '', locale, {
+            sensitivity: 'base',
+          }),
+        );
+      case 'rating_asc':
+        return items.sort((a, b) => a.rating - b.rating);
+      case 'rating_desc':
+        return items.sort((a, b) => b.rating - a.rating);
+      case 'date_desc':
+      default:
+        return items.sort(
+          (a, b) =>
+            new Date(b.submitted_at || b.created_at).getTime() -
+            new Date(a.submitted_at || a.created_at).getTime(),
+        );
+    }
+  }, [filteredReviews, reviewsSort, locale]);
+
+  const pagedArticles = paginateItems(sortedArticles, articlesPage, pageSize);
+  const pagedReviews = paginateItems(sortedReviews, reviewsPage, pageSize);
+
+  useEffect(() => {
+    setArticlesPage(1);
+  }, [conferenceFilter, articlesSort]);
+
+  useEffect(() => {
+    setReviewsPage(1);
+  }, [conferenceFilter, reviewsSort]);
+
+  useEffect(() => {
+    setListSortPreference('author.articles', articlesSort);
+  }, [articlesSort]);
+
+  useEffect(() => {
+    setListSortPreference('author.reviews', reviewsSort);
+  }, [reviewsSort]);
+
+  useEffect(() => {
+    if (pagedArticles.safePage !== articlesPage) setArticlesPage(pagedArticles.safePage);
+  }, [articlesPage, pagedArticles.safePage]);
+
+  useEffect(() => {
+    if (pagedReviews.safePage !== reviewsPage) setReviewsPage(pagedReviews.safePage);
+  }, [reviewsPage, pagedReviews.safePage]);
+
+  const renderPagination = (page: number, totalPages: number, onChange: (next: number) => void) => (
+    <div className="app-pagination">
+      <button
+        type="button"
+        onClick={() => onChange(Math.max(1, page - 1))}
+        disabled={page <= 1}
+        className="app-pagination-btn"
+      >
+        {t('common.previous')}
+      </button>
+      <span className="app-pagination-info">{t('common.pageOf', { page, total: totalPages })}</span>
+      <button
+        type="button"
+        onClick={() => onChange(Math.min(totalPages, page + 1))}
+        disabled={page >= totalPages}
+        className="app-pagination-btn"
+      >
+        {t('common.next')}
+      </button>
+    </div>
+  );
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -384,92 +561,136 @@ const AuthorDashboard: React.FC = () => {
     <div className="app-page-lg">
       <div className="flex justify-between items-center">
         <h1 className="app-page-title">{t('authorDashboard.pageTitle')}</h1>
+        <select
+          value={conferenceFilter}
+          onChange={(event) => setConferenceFilter(event.target.value)}
+          className="app-input max-w-xs"
+        >
+          <option value="all">{t('common.allConferences')}</option>
+          {conferences.map((conference) => (
+            <option key={conference.id} value={conference.id}>
+              {conference.title}
+            </option>
+          ))}
+        </select>
       </div>
 
       {/* Articles List */}
       <div className="app-card">
         <div className="app-card-header">
-          <h2 className="text-lg font-medium text-gray-900">{t('authorDashboard.submittedArticles')}</h2>
+          <div className="flex flex-col gap-2">
+            <h2 className="text-lg font-medium text-gray-900">{t('authorDashboard.submittedArticles')}</h2>
+            <select
+              value={articlesSort}
+              onChange={(event) => setArticlesSort(event.target.value as ArticleSortOption)}
+              className="app-input w-full"
+            >
+              <option value="date_desc">{t('common.newestFirst')}</option>
+              <option value="date_asc">{t('common.oldestFirst')}</option>
+              <option value="title_asc">{t('common.titleAZ')}</option>
+              <option value="title_desc">{t('common.titleZA')}</option>
+            </select>
+          </div>
         </div>
         
-        {articles.length === 0 ? (
+        {filteredArticles.length === 0 ? (
           <div className="app-empty-state">
             <FileText className="app-empty-icon" />
             <h3 className="app-empty-title">{t('authorDashboard.emptyTitle')}</h3>
             <p className="app-empty-description">{t('authorDashboard.emptyDescription')}</p>
           </div>
         ) : (
-          <div className="app-list-divider">
-            {articles.map((article) => (
-              <div key={article.id} className="app-list-item hover:bg-gray-50 transition-colors">
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    <div className="flex items-center space-x-3">
-                      <h3 className="text-lg font-medium text-gray-900">{article.title}</h3>
-                      {getStatusIcon(article.status)}
+          <>
+            <div className="app-list-divider">
+              {pagedArticles.pageItems.map((article) => (
+                <div key={article.id} className="app-list-item hover:bg-gray-50 transition-colors">
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                      <div className="flex items-center space-x-3">
+                        <h3 className="text-lg font-medium text-gray-900">{article.title}</h3>
+                        {getStatusIcon(article.status)}
+                      </div>
+                      <p className="mt-2 text-sm text-gray-600 line-clamp-2">{article.abstract}</p>
+                      <div className="mt-3 flex items-center space-x-4">
+                        <span className={`app-pill ${getStatusColor(article.status)}`}>
+                          {getStatusLabel(article.status)}
+                        </span>
+                        <span className="text-sm text-gray-500">
+                          {t('common.submittedOn', { date: formatDate(article.submitted_at) })}
+                        </span>
+                      </div>
                     </div>
-                    <p className="mt-2 text-sm text-gray-600 line-clamp-2">{article.abstract}</p>
-                    <div className="mt-3 flex items-center space-x-4">
-                      <span className={`app-pill ${getStatusColor(article.status)}`}>
-                        {getStatusLabel(article.status)}
-                      </span>
-                      <span className="text-sm text-gray-500">
-                        {t('common.submittedOn', { date: formatDate(article.submitted_at) })}
-                      </span>
-                    </div>
+                    <button
+                      onClick={() => handleOpenArticle(article)}
+                      className="ml-4 app-btn-primary"
+                    >
+                      {t('authorDashboard.viewArticleButton')}
+                    </button>
                   </div>
-                  <button
-                    onClick={() => handleOpenArticle(article)}
-                    className="ml-4 app-btn-primary"
-                  >
-                    {t('authorDashboard.viewArticleButton')}
-                  </button>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+            {renderPagination(articlesPage, pagedArticles.totalPages, setArticlesPage)}
+          </>
         )}
       </div>
 
       {/* Reviews Section */}
-      {reviews.length > 0 && (
+      {filteredReviews.length > 0 && (
         <div className="app-card">
           <div className="app-card-header">
-            <h2 className="text-lg font-medium text-gray-900">{t('authorDashboard.reviewsReceived')}</h2>
+            <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+              <h2 className="text-lg font-medium text-gray-900">{t('authorDashboard.reviewsReceived')}</h2>
+              <select
+                value={reviewsSort}
+                onChange={(event) => setReviewsSort(event.target.value as ReviewSortOption)}
+                className="app-input w-full md:w-auto"
+              >
+                <option value="date_desc">{t('common.newestFirst')}</option>
+                <option value="date_asc">{t('common.oldestFirst')}</option>
+                <option value="title_asc">{t('common.titleAZ')}</option>
+                <option value="title_desc">{t('common.titleZA')}</option>
+                <option value="rating_desc">{t('common.ratingHighToLow')}</option>
+                <option value="rating_asc">{t('common.ratingLowToHigh')}</option>
+              </select>
+            </div>
           </div>
-          <div className="app-list-divider">
-            {reviews.map((review) => (
-              <div key={review.id} className="app-list-item">
-                <div className="flex justify-between items-start">
-                  <div className="flex-1">
-                    <h4 className="text-md font-medium text-gray-900">
-                      {t('authorDashboard.reviewFor', {
-                        title: review.articles?.title ?? t('common.noData'),
-                      })}
-                    </h4>
-                    <p className="mt-1 text-sm text-gray-600">
-                      {t('common.by', { name: review.profiles?.full_name ?? t('common.noData') })}
-                      {' - '}
-                      {t('common.reviewedOn', { date: formatDate(review.submitted_at || review.created_at) })}
-                    </p>
-                    <div className="mt-2 flex items-center space-x-4">
-                      <span className="text-sm text-gray-500">
-                        {t('common.rating', { rating: review.rating })}
-                      </span>
-                      <span className={`app-pill ${
-                        review.recommendation === 'accept' ? 'bg-green-100 text-green-800' :
-                        review.recommendation === 'accept_with_comments' ? 'bg-amber-100 text-amber-800' :
-                        'bg-red-100 text-red-800'
-                      }`}>
-                        {getRecommendationLabel(review.recommendation)}
-                      </span>
+          <>
+            <div className="app-list-divider">
+              {pagedReviews.pageItems.map((review) => (
+                <div key={review.id} className="app-list-item">
+                  <div className="flex justify-between items-start">
+                    <div className="flex-1">
+                      <h4 className="text-md font-medium text-gray-900">
+                        {t('authorDashboard.reviewFor', {
+                          title: review.articles?.title ?? t('common.noData'),
+                        })}
+                      </h4>
+                      <p className="mt-1 text-sm text-gray-600">
+                        {t('common.by', { name: review.profiles?.full_name ?? t('common.noData') })}
+                        {' - '}
+                        {t('common.reviewedOn', { date: formatDate(review.submitted_at || review.created_at) })}
+                      </p>
+                      <div className="mt-2 flex items-center space-x-4">
+                        <span className="text-sm text-gray-500">
+                          {t('common.rating', { rating: review.rating })}
+                        </span>
+                        <span className={`app-pill ${
+                          review.recommendation === 'accept' ? 'bg-green-100 text-green-800' :
+                          review.recommendation === 'accept_with_comments' ? 'bg-amber-100 text-amber-800' :
+                          'bg-red-100 text-red-800'
+                        }`}>
+                          {getRecommendationLabel(review.recommendation)}
+                        </span>
+                      </div>
+                      <p className="mt-3 text-sm text-gray-700">{review.content}</p>
                     </div>
-                    <p className="mt-3 text-sm text-gray-700">{review.content}</p>
                   </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+            {renderPagination(reviewsPage, pagedReviews.totalPages, setReviewsPage)}
+          </>
         </div>
       )}
     </div>

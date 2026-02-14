@@ -9,12 +9,13 @@ import ReviewerDashboard from './components/dashboard/ReviewerDashboard';
 import OrganizerDashboard from './components/dashboard/OrganizerDashboard';
 import NotificationsPage from './components/NotificationsPage';
 import ProfileSettingsPage from './components/ProfileSettingsPage';
+import RoleManagementPage from './components/RoleManagementPage';
 import { UserRole } from './types/database.types';
 
 const allowedPagesByRole: Record<UserRole, string[]> = {
   author: ['dashboard', 'submit', 'profile', 'notifications'],
   reviewer: ['reviews', 'articles', 'profile', 'notifications'],
-  organizer: ['dashboard', 'reviews', 'manage', 'profile', 'notifications'],
+  organizer: ['dashboard', 'reviews', 'manage', 'roles', 'profile', 'notifications'],
 };
 
 const getDefaultPageForRole = (role: UserRole) => (role === 'reviewer' ? 'reviews' : 'dashboard');
@@ -71,6 +72,9 @@ const AppContent: React.FC = () => {
         break;
       case 'manage':
         if (profile.role === 'organizer') return <OrganizerDashboard currentPage="manage" />;
+        break;
+      case 'roles':
+        if (profile.role === 'organizer') return <RoleManagementPage />;
         break;
       case 'profile':
         return <ProfileSettingsPage />;
