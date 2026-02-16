@@ -23,4 +23,3 @@ dist-ssr
 .env
 .env.*
 !.env.example
-.bolt

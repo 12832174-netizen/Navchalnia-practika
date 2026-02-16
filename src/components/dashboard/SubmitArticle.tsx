@@ -6,6 +6,15 @@ import { useAuth } from '../../contexts/AuthContext';
 import { Conference } from '../../types/database.types';
 import { isSupportedArticleFile } from '../../utils/articleFiles';
 
+interface SubmitArticleDraft {
+  title: string;
+  abstract: string;
+  keywords: string;
+  selectedConferenceId: string;
+}
+
+const getDraftStorageKey = (userId: string) => `submit-article-draft:${userId}`;
+
 const SubmitArticle: React.FC = () => {
   const { t } = useTranslation();
   const [formData, setFormData] = useState({
@@ -19,7 +28,23 @@ const SubmitArticle: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState('');
+  const [errorDetails, setErrorDetails] = useState('');
+  const [draftLoaded, setDraftLoaded] = useState(false);
   const { user } = useAuth();
+
+  const mapSubmitError = (rawMessage: string) => {
+    const normalized = rawMessage.toLowerCase();
+    if (normalized.includes('row-level security')) {
+      return t('submitArticle.uploadDeniedPolicy');
+    }
+    if (normalized.includes('payload too large') || normalized.includes('maximum allowed size')) {
+      return t('submitArticle.invalidFileSize');
+    }
+    if (normalized.includes('mime') || normalized.includes('content-type')) {
+      return t('submitArticle.invalidFileType');
+    }
+    return rawMessage;
+  };
 
   useEffect(() => {
     const fetchConferences = async () => {
@@ -40,6 +65,48 @@ const SubmitArticle: React.FC = () => {
     fetchConferences();
   }, []);
 
+  useEffect(() => {
+    if (!user) {
+      setDraftLoaded(false);
+      return;
+    }
+
+    try {
+      const rawDraft = localStorage.getItem(getDraftStorageKey(user.id));
+      if (rawDraft) {
+        const draft = JSON.parse(rawDraft) as Partial<SubmitArticleDraft>;
+        setFormData({
+          title: typeof draft.title === 'string' ? draft.title : '',
+          abstract: typeof draft.abstract === 'string' ? draft.abstract : '',
+          keywords: typeof draft.keywords === 'string' ? draft.keywords : '',
+        });
+        setSelectedConferenceId(
+          typeof draft.selectedConferenceId === 'string' ? draft.selectedConferenceId : '',
+        );
+      }
+    } catch (storageError) {
+      console.error('Error loading submit article draft:', storageError);
+    } finally {
+      setDraftLoaded(true);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    if (!user || !draftLoaded || success) return;
+
+    try {
+      const draft: SubmitArticleDraft = {
+        title: formData.title,
+        abstract: formData.abstract,
+        keywords: formData.keywords,
+        selectedConferenceId,
+      };
+      localStorage.setItem(getDraftStorageKey(user.id), JSON.stringify(draft));
+    } catch (storageError) {
+      console.error('Error saving submit article draft:', storageError);
+    }
+  }, [user, draftLoaded, success, formData, selectedConferenceId]);
+
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     setFormData(prev => ({
       ...prev,
@@ -52,14 +119,17 @@ const SubmitArticle: React.FC = () => {
     if (selectedFile) {
       if (!isSupportedArticleFile(selectedFile)) {
         setError(t('submitArticle.invalidFileType'));
+        setErrorDetails('');
         return;
       }
       if (selectedFile.size > 10 * 1024 * 1024) {
         setError(t('submitArticle.invalidFileSize'));
+        setErrorDetails('');
         return;
       }
       setFile(selectedFile);
       setError('');
+      setErrorDetails('');
     }
   };
 
@@ -88,6 +158,7 @@ const SubmitArticle: React.FC = () => {
 
     setLoading(true);
     setError('');
+    setErrorDetails('');
 
     try {
       let filePath = '';
@@ -125,8 +196,11 @@ const SubmitArticle: React.FC = () => {
       setFormData({ title: '', abstract: '', keywords: '' });
       setSelectedConferenceId('');
       setFile(null);
+      localStorage.removeItem(getDraftStorageKey(user.id));
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : String(err));
+      const rawMessage = err instanceof Error ? err.message : String(err);
+      setError(mapSubmitError(rawMessage));
+      setErrorDetails(rawMessage);
     } finally {
       setLoading(false);
     }
@@ -169,6 +243,9 @@ const SubmitArticle: React.FC = () => {
         {error && (
           <div className="app-alert-error">
             <p className="app-alert-error-text">{error}</p>
+            {errorDetails && errorDetails !== error && (
+              <p className="mt-2 text-xs opacity-80 break-all">{errorDetails}</p>
+            )}
           </div>
         )}
 

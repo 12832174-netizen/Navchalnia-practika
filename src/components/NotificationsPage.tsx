@@ -22,6 +22,86 @@ const NotificationsPage: React.FC = () => {
 
   const formatDateTime = (date: string) => formatDateTimeByPreferences(date, locale);
 
+  const localizeNotification = (notification: DbNotification) => {
+    const statusUpdatedPattern = /^Your article "(.+)" status has been changed to: ([a-z_]+)$/i;
+    const submittedPattern = /^Your article "(.+)" has been successfully submitted\.$/i;
+    const newSubmissionPattern = /^A new article "(.+)" was submitted(?: by (.+))?\.$/i;
+    const assignmentPattern =
+      /^You have been assigned to review an article\.(?: Deadline:\s(.+))?$/i;
+    const reviewSubmittedPattern =
+      /^A review for "(.+)" has been submitted by (.+) with recommendation: ([a-z_]+)\.$/i;
+
+    const statusMatch = notification.message.match(statusUpdatedPattern);
+    if (notification.title === 'Article Status Updated' && statusMatch) {
+      const [, articleTitle, statusRaw] = statusMatch;
+      const localizedStatus = t(`articleStatus.${statusRaw}`, { defaultValue: statusRaw });
+      return {
+        title: t('notifications.templates.articleStatusUpdatedTitle'),
+        message: t('notifications.templates.articleStatusUpdatedMessage', {
+          title: articleTitle,
+          status: localizedStatus,
+        }),
+      };
+    }
+
+    const submittedMatch = notification.message.match(submittedPattern);
+    if (notification.title === 'Article Submitted' && submittedMatch) {
+      const [, articleTitle] = submittedMatch;
+      return {
+        title: t('notifications.templates.articleSubmittedTitle'),
+        message: t('notifications.templates.articleSubmittedMessage', { title: articleTitle }),
+      };
+    }
+
+    const newSubmissionMatch = notification.message.match(newSubmissionPattern);
+    if (notification.title === 'New Article Submission' && newSubmissionMatch) {
+      const [, articleTitle, authorName] = newSubmissionMatch;
+      return {
+        title: t('notifications.templates.newArticleSubmissionTitle'),
+        message: t('notifications.templates.newArticleSubmissionMessage', {
+          title: articleTitle,
+          author: authorName || t('common.noData'),
+        }),
+      };
+    }
+
+    const assignmentMatch = notification.message.match(assignmentPattern);
+    if (notification.title === 'New Review Assignment' && assignmentMatch) {
+      const [, deadline] = assignmentMatch;
+      return {
+        title: t('notifications.templates.newReviewAssignmentTitle'),
+        message: deadline
+          ? t('notifications.templates.newReviewAssignmentMessageWithDeadline', { deadline })
+          : t('notifications.templates.newReviewAssignmentMessage'),
+      };
+    }
+
+    if (notification.title === 'Review Deadline Missed') {
+      return {
+        title: t('notifications.templates.reviewDeadlineMissedTitle'),
+        message: t('notifications.templates.reviewDeadlineMissedMessage'),
+      };
+    }
+
+    const reviewSubmittedMatch = notification.message.match(reviewSubmittedPattern);
+    if (notification.title === 'Review Submitted' && reviewSubmittedMatch) {
+      const [, articleTitle, reviewerName, recommendationRaw] = reviewSubmittedMatch;
+      const localizedRecommendation = t(`recommendation.${recommendationRaw}`, {
+        defaultValue: recommendationRaw,
+      });
+      return {
+        title: t('notifications.templates.reviewSubmittedTitle'),
+        message: t('notifications.templates.reviewSubmittedMessage', {
+          title: articleTitle,
+          reviewer: reviewerName,
+          recommendation: localizedRecommendation,
+        }),
+      };
+    }
+
+    return { title: notification.title, message: notification.message };
+  };
+
   const fetchNotifications = useCallback(async () => {
     if (!user) return;
 
@@ -132,15 +212,22 @@ const NotificationsPage: React.FC = () => {
             <div key={notification.id} className={`notifications-item p-6 ${notification.read ? '' : 'is-unread'}`}>
               <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-sm font-semibold">{notification.title}</h3>
-                    {!notification.read && (
-                      <span className="notifications-badge app-pill rounded-full bg-blue-100 text-blue-700">
-                        {t('notifications.new')}
-                      </span>
-                    )}
-                  </div>
-                  <p className="mt-2 text-sm">{notification.message}</p>
+                  {(() => {
+                    const localized = localizeNotification(notification);
+                    return (
+                      <>
+                        <div className="flex items-center gap-2">
+                          <h3 className="text-sm font-semibold">{localized.title}</h3>
+                          {!notification.read && (
+                            <span className="notifications-badge app-pill rounded-full bg-blue-100 text-blue-700">
+                              {t('notifications.new')}
+                            </span>
+                          )}
+                        </div>
+                        <p className="mt-2 text-sm">{localized.message}</p>
+                      </>
+                    );
+                  })()}
                   <p className="mt-2 text-xs app-pagination-info">{formatDateTime(notification.created_at)}</p>
                 </div>
                 {!notification.read && (

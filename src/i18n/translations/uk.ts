@@ -74,6 +74,24 @@ const uk = {
     markAsRead: 'Позначити як прочитане',
     markingOne: 'Збереження...',
     new: 'Нове',
+    templates: {
+      articleStatusUpdatedTitle: 'Статус статті оновлено',
+      articleStatusUpdatedMessage: 'Статус вашої статті "{{title}}" змінено на: {{status}}',
+      articleSubmittedTitle: 'Статтю подано',
+      articleSubmittedMessage: 'Вашу статтю "{{title}}" успішно подано.',
+      newArticleSubmissionTitle: 'Нове подання статті',
+      newArticleSubmissionMessage: 'Надійшла нова стаття "{{title}}" від {{author}}.',
+      newReviewAssignmentTitle: 'Нове призначення на рецензування',
+      newReviewAssignmentMessage: 'Вам призначено нову статтю на рецензування.',
+      newReviewAssignmentMessageWithDeadline:
+        'Вам призначено нову статтю на рецензування. Дедлайн: {{deadline}}',
+      reviewDeadlineMissedTitle: 'Пропущено дедлайн рецензування',
+      reviewDeadlineMissedMessage:
+        'Одне з ваших призначених рецензувань прострочене. Будь ласка, надішліть рецензію якнайшвидше.',
+      reviewSubmittedTitle: 'Рецензію подано',
+      reviewSubmittedMessage:
+        'Для статті "{{title}}" подано рецензію від {{reviewer}} з рекомендацією: {{recommendation}}.',
+    },
   },
   profileSettings: {
     pageTitle: 'Профіль і налаштування',
@@ -164,6 +182,7 @@ const uk = {
     conferenceRequired: 'Будь ласка, оберіть конференцію',
     keywordsRequired: 'Будь ласка, вкажіть хоча б одне ключове слово',
     fileRequired: 'Будь ласка, завантажте файл статті',
+    uploadDeniedPolicy: 'Завантаження заборонено політикою сховища. Зверніться до організатора/адміністратора.',
     noConferencesAvailable: 'Поки немає доступних конференцій. Зверніться до організатора.',
     titleLabel: 'Назва статті *',
     titlePlaceholder: 'Введіть назву статті',

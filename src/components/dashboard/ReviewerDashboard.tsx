@@ -367,13 +367,6 @@ const ReviewerDashboard: React.FC<ReviewerDashboardProps> = ({
 
       if (error) throw error;
 
-      const { error: statusError } = await supabase
-        .from('articles')
-        .update({ status: 'under_review' })
-        .eq('id', selectedArticle.id);
-
-      if (statusError) throw statusError;
-
       setSelectedArticle(null);
       setSelectedReview(null);
       setArticleReviews([]);

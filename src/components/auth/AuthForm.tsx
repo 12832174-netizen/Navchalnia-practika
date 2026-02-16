@@ -33,6 +33,13 @@ const AuthForm: React.FC = () => {
           formData.fullName,
           formData.institution
         );
+        setIsLogin(true);
+        setFormData(prev => ({
+          ...prev,
+          password: '',
+          fullName: '',
+          institution: '',
+        }));
       }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err));

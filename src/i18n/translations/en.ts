@@ -74,6 +74,24 @@ const en = {
     markAsRead: 'Mark as read',
     markingOne: 'Saving...',
     new: 'New',
+    templates: {
+      articleStatusUpdatedTitle: 'Article Status Updated',
+      articleStatusUpdatedMessage: 'Your article "{{title}}" status has been changed to: {{status}}',
+      articleSubmittedTitle: 'Article Submitted',
+      articleSubmittedMessage: 'Your article "{{title}}" has been successfully submitted.',
+      newArticleSubmissionTitle: 'New Article Submission',
+      newArticleSubmissionMessage: 'A new article "{{title}}" was submitted by {{author}}.',
+      newReviewAssignmentTitle: 'New Review Assignment',
+      newReviewAssignmentMessage: 'You have been assigned to review an article.',
+      newReviewAssignmentMessageWithDeadline:
+        'You have been assigned to review an article. Deadline: {{deadline}}',
+      reviewDeadlineMissedTitle: 'Review Deadline Missed',
+      reviewDeadlineMissedMessage:
+        'One of your assigned reviews is overdue. Please submit your review as soon as possible.',
+      reviewSubmittedTitle: 'Review Submitted',
+      reviewSubmittedMessage:
+        'A review for "{{title}}" has been submitted by {{reviewer}} with recommendation: {{recommendation}}.',
+    },
   },
   profileSettings: {
     pageTitle: 'Profile & Settings',
@@ -164,6 +182,7 @@ const en = {
     conferenceRequired: 'Please select a conference',
     keywordsRequired: 'Please enter at least one keyword',
     fileRequired: 'Please upload the article file',
+    uploadDeniedPolicy: 'Upload denied by storage policy. Please contact organizer/admin.',
     noConferencesAvailable: 'No conferences available yet. Ask an organizer to create one.',
     titleLabel: 'Article Title *',
     titlePlaceholder: 'Enter your article title',
